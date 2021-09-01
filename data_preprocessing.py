@@ -11,8 +11,8 @@ id_sequence_dict = defaultdict()
 sentence_dict = defaultdict()
 
 def makeDict(subreddit):
-    POSTPATH = './data/raw_data/posts_{}.csv'.format(subreddit)
-    COMMENTPATH = './data/raw_data/comments_{}.csv'.format(subreddit)
+    POSTPATH = './data/{}_posts.csv'.format(subreddit)
+    COMMENTPATH = './data/{}_comments.csv'.format(subreddit)
 
     post_dict.clear()
     comment_dict.clear()
