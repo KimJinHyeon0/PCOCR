@@ -2,33 +2,28 @@ import pickle
 from collections import defaultdict
 import pandas as pd
 
-train_post_dict = defaultdict()
-test_post_dict = defaultdict()
+post_dict = defaultdict()
 comment_dict = defaultdict()
 
-train_key_sequence_dict = defaultdict()
-test_key_sequence_dict = defaultdict()
-
-train_id_sequence_dict = defaultdict()
-test_id_sequence_dict = defaultdict()
+key_sequence_dict = defaultdict()
+id_sequence_dict = defaultdict()
 
 sentence_dict = defaultdict()
 
 def makeDict(subreddit):
+    POSTPATH = './data/raw_data/posts_{}.csv'.format(subreddit)
+    COMMENTPATH = './data/raw_data/comments_{}.csv'.format(subreddit)
 
-    train_post_dict.clear()
-    test_post_dict.clear()
+    post_dict.clear()
     comment_dict.clear()
+
+    key_sequence_dict.clear()
+    id_sequence_dict.clear()
+
     sentence_dict.clear()
 
-    train_key_sequence_dict.clear()
-    test_key_sequence_dict.clear()
-
-    train_id_sequence_dict.clear()
-    test_id_sequence_dict.clear()
-
-    #post_train_dict
-    with open('./data/raw_data/posts_' + subreddit + '_train.csv', 'r', encoding='utf-8') as f:
+    #post_dict
+    with open(POSTPATH, 'r', encoding='utf-8') as f:
         post_train = f.read().rstrip("\n;\n").split("\n;\n")
 
     for i in range(len(post_train)):
@@ -38,33 +33,15 @@ def makeDict(subreddit):
         title = data[4]
         selftext = data[7]
 
-        train_post_dict[post_key] = data
-        train_key_sequence_dict.update({post_key:[]})
-        train_id_sequence_dict.update({post_id:[]})
-
-        body = title + ' ' + selftext
-        sentence_dict.update({post_id:body})
-
-    #post_test_dict
-    with open('./data/raw_data/posts_' + subreddit + '_test.csv', 'r', encoding='utf-8') as f:
-        post_test = f.read().rstrip("\n;\n").split("\n;\n")
-
-    for i in range(len(post_test)):
-        data = post_test[i].split('\t;\t')
-        post_id = int(data[0])
-        post_key = data[1]
-        title = data[4]
-        selftext = data[7]
-
-        test_post_dict[post_key] = data
-        test_key_sequence_dict.update({post_key:[]})
-        test_id_sequence_dict.update({post_id: []})
+        post_dict[post_key] = data
+        key_sequence_dict.update({post_key:[]})
+        id_sequence_dict.update({post_id:[]})
 
         body = title + ' ' + selftext
         sentence_dict.update({post_id:body})
 
     #comment_dict
-    with open('./data/raw_data/comments_' + subreddit + '.csv', 'r', encoding='utf-8') as f:
+    with open(COMMENTPATH, 'r', encoding='utf-8') as f:
         comment = f.read().rstrip("\n;\n").split("\n;\n")
 
     for i in range(len(comment)):
@@ -84,27 +61,20 @@ def makeDict(subreddit):
             time_stamp = int(data[7])
 
     #key_sequence_dict
-        if link_key in train_key_sequence_dict:
-            train_key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
-
-        if link_key in test_key_sequence_dict:
-            test_key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
+        if link_key in key_sequence_dict:
+            key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
 
     #sort key_sequence_dict by time_stamp
-    for i in list(train_key_sequence_dict.keys()):
-        train_key_sequence_dict[i].sort(key=lambda x: (x[2]))
+    for i in list(key_sequence_dict.keys()):
+        key_sequence_dict[i].sort(key=lambda x: (x[2]))
 
-    for i in list(test_key_sequence_dict.keys()):
-        test_key_sequence_dict[i].sort(key=lambda x: (x[2]))
-
-
-def makeTrainDataframe(subreddit):
+def makeDf(subreddit):
     u_list, i_list, ts_list, label_list, idx_list = [], [], [], [], []
 
     idx = 1
 
-    for post_key in list(train_key_sequence_dict.keys()):
-        sequence = train_key_sequence_dict[post_key]
+    for post_key in list(key_sequence_dict.keys()):
+        sequence = key_sequence_dict[post_key]
 
         for j in range(len(sequence)):
             comment_key = sequence[j][0]
@@ -115,8 +85,8 @@ def makeTrainDataframe(subreddit):
 
             link_key = comment_dict[comment_key][4]
 
-            if parent_key in train_post_dict:
-                parent_id = int(train_post_dict[parent_key][0])
+            if parent_key in post_dict:
+                parent_id = int(post_dict[parent_key][0])
 
             elif parent_key in comment_dict:
                 parent_id = int(comment_dict[parent_key][0])
@@ -138,9 +108,8 @@ def makeTrainDataframe(subreddit):
             label_list.append(label)
             idx_list.append(idx)
 
-            link_id = int(train_post_dict[link_key][0])
-            train_id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp, label, idx)]
-
+            link_id = int(post_dict[link_key][0])
+            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp, label, idx)]
             idx += 1
 
     return pd.DataFrame({'u': u_list,
@@ -149,90 +118,31 @@ def makeTrainDataframe(subreddit):
                          'label': label_list,
                          'idx': idx_list})
 
-def makeTestDataframe(subreddit):
-    u_list, i_list, ts_list, label_list, idx_list = [], [], [], [], []
+def save(df, subreddit):
 
-    idx = 1
-
-    for post_key in list(test_key_sequence_dict.keys()):
-
-        sequence = test_key_sequence_dict[post_key]
-        for j in range(len(sequence)):
-
-            comment_key = sequence[j][0]
-            parent_key = sequence[j][1]
-            time_stamp = sequence[j][2]
-
-            comment_id = int(comment_dict[comment_key][0])
-
-            link_key = comment_dict[comment_key][4]
-
-            if parent_key in test_post_dict:
-                parent_id = int(test_post_dict[parent_key][0])
-
-            elif parent_key in comment_dict:
-                parent_id = int(comment_dict[parent_key][0])
-
-            else:
-                continue
-
-            if j == len(sequence)-1:
-                label = 0
-            else:
-                label = 1
-
-            u_list.append(comment_id)
-            i_list.append(parent_id)
-            ts_list.append(time_stamp)
-            label_list.append(label)
-            idx_list.append(idx)
-
-            link_id = int(test_post_dict[link_key][0])
-
-            test_id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp, label, idx)]
-
-            idx += 1
-
-    return pd.DataFrame({'u': u_list,
-                         'i': i_list,
-                         'ts': ts_list,
-                         'label': label_list,
-                         'idx': idx_list})
-
-def save(train_df, test_df, subreddit):
-
-    train_df.to_csv(OUT_CSV_train)
-    print('\nSaved {}_train.csv'.format(subreddit))
-    test_df.to_csv(OUT_CSV_test)
-    print('\nSaved {}_test.csv'.format(subreddit))
+    df.to_csv(OUT_CSV_train)
+    print('\nSaved ml_{}.csv'.format(subreddit))
 
     with open(OUT_SENTENCE_DICT, 'wb') as f:
         pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
     print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
 
-    with open(OUT_SEQUENCE_DICT_TRAIN, 'wb') as f:
-        pickle.dump(train_id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
-    print('\nSaved {}_sequence_dict_train.pickle'.format(subreddit))
+    # with open(OUT_SEQUENCE_DICT, 'wb') as f:
+    #     pickle.dump(id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
+    # print('\nSaved {}_sequence_dict.pickle'.format(subreddit))
 
-    with open(OUT_SEQUENCE_DICT_TEST.format(subreddit), 'wb') as f:
-        pickle.dump(test_id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
-    print('\nSaved {}_sequence_dict_test.pickle'.format(subreddit))
 
 subredditlist = ['news', 'iama', 'showerthoughts']
 for subreddit in subredditlist:
     print('\nProcessing subreddit - {}...\n'.format(subreddit))
 
-    OUT_CSV_train = './processed/{}_train.csv'.format(subreddit)
-    OUT_CSV_test = './processed/{}_test.csv'.format(subreddit)
+    OUT_CSV_train = './processed/ml_{}.csv'.format(subreddit)
     OUT_SENTENCE_DICT = './data/{}_sentence_dict.pickle'.format(subreddit)
-    OUT_SEQUENCE_DICT_TRAIN = './processed/{}_seq_dict_train.pickle'.format(subreddit)
-    OUT_SEQUENCE_DICT_TEST = './processed/{}_seq_dict_test.pickle'.format(subreddit)
+    OUT_SEQUENCE_DICT = './processed/{}_seq_dict.pickle'.format(subreddit)
 
     makeDict(subreddit)
-    train_df = makeTrainDataframe(subreddit)
-    test_df = makeTestDataframe(subreddit)
-
-    save(train_df, test_df, subreddit)
+    df = makeDf(subreddit)
+    save(df, subreddit)
     print('-' * 50)
 
 print('\nDone')
