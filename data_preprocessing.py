@@ -32,10 +32,10 @@ def makeDict(subreddit):
         post_key = data[1]
         title = data[4]
         selftext = data[7]
-
+        created_utc = data[8]
         post_dict[post_key] = data
         key_sequence_dict.update({post_key:[]})
-        id_sequence_dict.update({post_id:[]})
+        id_sequence_dict.update({post_id:[(created_utc)]})
 
         body = title + ' ' + selftext
         sentence_dict.update({post_id:body})
@@ -53,7 +53,6 @@ def makeDict(subreddit):
         body = data[6]
 
         comment_dict[comment_key] = data
-        sentence_dict.update({comment_id:body})
 
         if subreddit == 'news':
             time_stamp = int(data[8])
@@ -63,15 +62,13 @@ def makeDict(subreddit):
     #key_sequence_dict
         if link_key in key_sequence_dict:
             key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
+            sentence_dict.update({comment_id: body})
 
     #sort key_sequence_dict by time_stamp
     for i in list(key_sequence_dict.keys()):
         key_sequence_dict[i].sort(key=lambda x: (x[2]))
 
-def makeDf(subreddit):
-    u_list, i_list, ts_list, label_list, idx_list = [], [], [], [], []
-
-    idx = 1
+def makeSeq(subreddit):
 
     for post_key in list(key_sequence_dict.keys()):
         sequence = key_sequence_dict[post_key]
@@ -79,7 +76,7 @@ def makeDf(subreddit):
         for j in range(len(sequence)):
             comment_key = sequence[j][0]
             parent_key = sequence[j][1]
-            time_stamp = sequence[j][2]
+            time_stamp = int(sequence[j][2])
 
             comment_id = int(comment_dict[comment_key][0])
 
@@ -94,54 +91,80 @@ def makeDf(subreddit):
             else:
                 continue
 
-            u = comment_id
-            i = parent_id
+            link_id = int(post_dict[link_key][0])
+            link_ts = int(id_sequence_dict[link_id][0])
 
-            if j == len(sequence)-1:
-                label = 0
-            else:
-                label = 1
 
+            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts)]
+
+
+def makeDf(subreddit):
+    g_list, g_ts_list, u_list, i_list, ts_list, label_list = [], [], [], [], [], []
+
+    for key in id_sequence_dict:
+        g_num = key
+
+        seq = id_sequence_dict[key]
+        g_ts = seq[0]
+
+        temp = []
+
+        for comment in seq[1:]:
+            u, i, ts = comment[:]
+
+            g_list.append(g_num)
+            g_ts_list.append(g_ts)
             u_list.append(u)
             i_list.append(i)
-            ts_list.append(time_stamp)
+            ts_list.append(ts)
+
+            temp.append(i)
+
+        for comment in seq[1:]:
+            src = comment[0]
+
+            if src in set(temp):
+                label = 1
+            else:
+                label = 0
+
             label_list.append(label)
-            idx_list.append(idx)
 
-            link_id = int(post_dict[link_key][0])
-            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp, label, idx)]
-            idx += 1
-
-    return pd.DataFrame({'u': u_list,
+    df = pd.DataFrame({'g_num' : g_list,
+                         'g_ts' : g_ts_list,
+                         'u': u_list,
                          'i': i_list,
                          'ts': ts_list,
-                         'label': label_list,
-                         'idx': idx_list})
+                         'label': label_list})
+
+    return df
+
 
 def save(df, subreddit):
 
     df.to_csv(OUT_CSV_train)
-    print('\nSaved ml_{}.csv'.format(subreddit))
+    print('\nSaved {}_structure.csv'.format(subreddit))
 
-    with open(OUT_SENTENCE_DICT, 'wb') as f:
-        pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
-    print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
+    # with open(OUT_SENTENCE_DICT, 'wb') as f:
+    #     pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
+    # print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
 
-    # with open(OUT_SEQUENCE_DICT, 'wb') as f:
-    #     pickle.dump(id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
-    # print('\nSaved {}_sequence_dict.pickle'.format(subreddit))
-
+    with open(OUT_SEQUENCE_DICT, 'wb') as f:
+        pickle.dump(id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
+    print('\nSaved {}_sequence_dict.pickle'.format(subreddit))
 
 subredditlist = ['news', 'iama', 'showerthoughts']
 for subreddit in subredditlist:
     print('\nProcessing subreddit - {}...\n'.format(subreddit))
 
-    OUT_CSV_train = './processed/ml_{}.csv'.format(subreddit)
+    OUT_CSV_train = './processed/{}_structure.csv'.format(subreddit)
     OUT_SENTENCE_DICT = './data/{}_sentence_dict.pickle'.format(subreddit)
     OUT_SEQUENCE_DICT = './processed/{}_seq_dict.pickle'.format(subreddit)
 
     makeDict(subreddit)
+    makeSeq(subreddit)
     df = makeDf(subreddit)
+
     save(df, subreddit)
     print('-' * 50)
 
