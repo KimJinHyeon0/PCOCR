@@ -45,7 +45,6 @@ def embeddingExtract(subreddit):
         embedding = torch.squeeze(torch.mean(embedding, dim=1))
         feature[key] = embedding
         cnt += 1
-
     return feature
 
 subredditList = ['iama', 'showerthoughts', 'news']
@@ -61,7 +60,7 @@ for subreddit in subredditList:
 
     empty_feat = np.ones_like(output)
     np.save(OUT_EDGE_FEAT, empty_feat)
-    print('Saved {}_node_feat.npy'.format(subreddit))
+    print('Saved {}_edge_feat.npy'.format(subreddit))
 
     del output
     torch.cuda.empty_cache()
