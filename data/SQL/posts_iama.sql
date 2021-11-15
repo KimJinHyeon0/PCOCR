@@ -1,5 +1,5 @@
 SELECT 
-post_id * 2 - 1,
+post_id,
 post_key,
 ifnull(author, 0) AS author,
 subreddit_key,

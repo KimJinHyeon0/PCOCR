@@ -1,5 +1,5 @@
 SELECT 
-comment_id * 2,
+comment_id + 52744,
 comment_key,
 ifnull(author, 0) AS author,
 subreddit_key,
@@ -28,7 +28,7 @@ calc_depth,
 ifnull(inter_comment_time, 0) AS inter_comment_time,
 ifnull(prev_comments, 0) AS prev_comments
 FROM comments
-WHERE is_valid = 1 and UNIX_TIMESTAMP('2018-03-01 00:00:00') - UNIX_TIMESTAMP(created_utc) > 0
+WHERE is_valid = 1
 INTO OUTFILE '/var/lib/mysql-files/news_comments.csv'
 CHARACTER SET UTF8
 FIELDS TERMINATED BY '\t;\t'

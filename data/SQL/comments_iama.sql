@@ -1,5 +1,5 @@
 SELECT 
-comment_id * 2,
+comment_id + 3172,
 comment_key,
 ifnull(author, 0) AS author,
 subreddit_key,
@@ -19,7 +19,7 @@ ifnull(distinguished, 0) AS distinguished,
 is_valid,
 calc_width
 FROM comments_iama
-WHERE is_valid = 1 and UNIX_TIMESTAMP('2018-03-01 00:00:00') - UNIX_TIMESTAMP(created_utc) > 0
+WHERE is_valid = 1
 INTO OUTFILE '/var/lib/mysql-files/iama_comments.csv'
 CHARACTER SET UTF8
 FIELDS TERMINATED BY '\t;\t'
