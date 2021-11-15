@@ -11,9 +11,8 @@ import pandas as pd
 import numpy as np
 # import numba
 
-from sklearn.metrics import average_precision_score
-from sklearn.metrics import f1_score
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, recall_score
+
 
 from module import TGAN
 from graph import NeighborFinder
@@ -21,7 +20,7 @@ from utils import EarlyStopMonitor, RandEdgeSampler
 
 ### Argument and global variables
 parser = argparse.ArgumentParser('Interface for TGAT experiments on link predictions')
-parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='iama')
+parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='showerthoughts')
 parser.add_argument('--bs', type=int, default=200, help='batch_size')
 parser.add_argument('--prefix', type=str, default='', help='prefix to name the checkpoints')
 parser.add_argument('--n_degree', type=int, default=20, help='number of neighbors to sample')
@@ -66,9 +65,17 @@ LEARNING_RATE = args.lr
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 
-MODEL_SAVE_PATH = f'./saved_models/{args.prefix}-{args.agg_method}-{args.attn_mode}-{args.data}.pth'
+TRAINING_METHOD = 'SELECTIVE'
+time_cut = 7200
+
+try:
+    saved_model = pd.read_csv('./saved_models/model_perfomance_eval.csv', index_col=0)
+    MODEL_NUM = saved_model.index[-1]+1
+except:
+    MODEL_NUM = 0
+
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{args.prefix}-{args.agg_method}-{args.attn_mode}-{args.data}-{epoch}.pth'
+    epoch: f'./saved_checkpoints/{MODEL_NUM}-{args.data}-{time_cut}-{TRAINING_METHOD}-{epoch}.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -117,7 +124,7 @@ def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
 
             val_acc.append((pred_label == true_label).mean())
             val_ap.append(average_precision_score(true_label, pred_score))
-            # val_f1.append(f1_score(true_label, pred_label))
+            val_f1.append(f1_score(true_label, pred_label))
             val_auc.append(roc_auc_score(true_label, pred_score))
 
     return np.mean(val_acc), np.mean(val_ap), np.mean(val_f1), np.mean(val_auc)
@@ -132,6 +139,7 @@ n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 train_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 test_time = np.quantile(g_df[g_df['g_ts'] > train_time].g_ts, 0.5)
 
+
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
 src_l = g_df.u.values
@@ -144,60 +152,76 @@ max_idx = max(src_l.max(), dst_l.max())
 random.seed(2020)
 
 train_flag = (g_ts < train_time)
-non_train_flag = (g_ts >= train_time)
 test_flag = (g_ts >= train_time) & (g_ts < test_time)
 valid_flag = (g_ts >= test_time)
 
-non_train_g_num = list(set(g_num[non_train_flag]))
-mask_node_set = []
+# train_g_num = list(set(g_num[train_flag]))
+# mask_node_set = []
+#
+# for num in train_g_num:
+#     src_list = g_df[g_num == num].u.values
+#     mask_node_set += random.sample(set(src_list), int(0.1 * len(src_list)))
+#
+# mask_src_flag = g_df.u.map(lambda x: x in mask_node_set).values
+#
+# valid_test_flag = test_flag * (1 - mask_src_flag)
+# valid_val_flag = valid_flag * (1 - mask_src_flag)
+#
+# nn_test_flag = test_flag * mask_src_flag
+# nn_val_flag = valid_flag * mask_src_flag
 
-for num in non_train_g_num:
-    src_list = g_df[g_num == num].u.values
-    mask_node_set += random.sample(set(src_list), int(0.1 * len(src_list)))
+if TRAINING_METHOD == 'SELECTIVE':
+    p_train_g_num_l = g_num[train_flag]
+    p_train_src_l = src_l[train_flag]
+    p_train_dst_l = dst_l[train_flag]
+    p_train_ts_l = ts_l[train_flag]
+    p_train_label_l = label_l[train_flag]
+    p_train_e_idx_l = e_idx_l[train_flag]
 
-mask_src_flag = g_df.u.map(lambda x: x in mask_node_set).values
+    time_cut_flag = (p_train_ts_l < time_cut)
 
+    train_g_num_l = p_train_g_num_l[time_cut_flag]
+    train_src_l = p_train_src_l[time_cut_flag]
+    train_dst_l = p_train_dst_l[time_cut_flag]
+    train_ts_l = p_train_ts_l[time_cut_flag]
+    train_label_l = p_train_label_l[time_cut_flag]
+    train_e_idx_l = p_train_e_idx_l[time_cut_flag]
 
-valid_test_flag = test_flag * (1 - mask_src_flag)
-valid_val_flag = valid_flag * (1 - mask_src_flag)
-
-nn_test_flag = test_flag * mask_src_flag
-nn_val_flag = valid_flag * mask_src_flag
-
-train_g_num_l = g_num[train_flag]
-train_src_l = src_l[train_flag]
-train_dst_l = dst_l[train_flag]
-train_ts_l = ts_l[train_flag]
-train_label_l = label_l[train_flag]
-train_e_idx_l = e_idx_l[train_flag]
-
-
-val_src_l = src_l[valid_val_flag]
-val_dst_l = dst_l[valid_val_flag]
-val_ts_l = ts_l[valid_val_flag]
-val_label_l = label_l[valid_val_flag]
-val_e_idx_l = e_idx_l[valid_val_flag]
-
-
-test_src_l = src_l[valid_test_flag]
-test_dst_l = dst_l[valid_test_flag]
-test_ts_l = ts_l[valid_test_flag]
-test_label_l = label_l[valid_test_flag]
-test_e_idx_l = e_idx_l[valid_test_flag]
-
-
-nn_val_src_l = src_l[nn_val_flag]
-nn_val_dst_l = dst_l[nn_val_flag]
-nn_val_ts_l = ts_l[nn_val_flag]
-nn_val_label_l = label_l[nn_val_flag]
-nn_val_e_idx_l = e_idx_l[nn_val_flag]
+else:
+    train_g_num_l = g_num[train_flag]
+    train_src_l = src_l[train_flag]
+    train_dst_l = dst_l[train_flag]
+    train_ts_l = ts_l[train_flag]
+    train_label_l = label_l[train_flag]
+    train_e_idx_l = e_idx_l[train_flag]
 
 
-nn_test_src_l = src_l[nn_test_flag]
-nn_test_dst_l = dst_l[nn_test_flag]
-nn_test_ts_l = ts_l[nn_test_flag]
-nn_test_label_l = label_l[nn_test_flag]
-nn_test_e_idx_l = e_idx_l[nn_test_flag]
+val_src_l = src_l[valid_flag]
+val_dst_l = dst_l[valid_flag]
+val_ts_l = ts_l[valid_flag]
+val_label_l = label_l[valid_flag]
+val_e_idx_l = e_idx_l[valid_flag]
+
+
+test_src_l = src_l[test_flag]
+test_dst_l = dst_l[test_flag]
+test_ts_l = ts_l[test_flag]
+test_label_l = label_l[test_flag]
+test_e_idx_l = e_idx_l[test_flag]
+
+
+# nn_val_src_l = src_l[nn_val_flag]
+# nn_val_dst_l = dst_l[nn_val_flag]
+# nn_val_ts_l = ts_l[nn_val_flag]
+# nn_val_label_l = label_l[nn_val_flag]
+# nn_val_e_idx_l = e_idx_l[nn_val_flag]
+#
+#
+# nn_test_src_l = src_l[nn_test_flag]
+# nn_test_dst_l = dst_l[nn_test_flag]
+# nn_test_ts_l = ts_l[nn_test_flag]
+# nn_test_label_l = label_l[nn_test_flag]
+# nn_test_e_idx_l = e_idx_l[nn_test_flag]
 
 
 
@@ -220,9 +244,9 @@ full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
 
 train_rand_sampler = RandEdgeSampler(train_src_l, train_dst_l)
 val_rand_sampler = RandEdgeSampler(src_l, dst_l)
-nn_val_rand_sampler = RandEdgeSampler(nn_val_src_l, nn_val_dst_l)
+# nn_val_rand_sampler = RandEdgeSampler(nn_val_src_l, nn_val_dst_l)
 test_rand_sampler = RandEdgeSampler(src_l, dst_l)
-nn_test_rand_sampler = RandEdgeSampler(nn_test_src_l, nn_test_dst_l)
+# nn_test_rand_sampler = RandEdgeSampler(nn_test_src_l, nn_test_dst_l)
 
 ### Model initialize
 device = torch.device('cuda:{}'.format(GPU))
@@ -285,7 +309,7 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
             true_label = np.concatenate([np.ones(size), np.zeros(size)])
             acc.append((pred_label == true_label).mean())
             ap.append(average_precision_score(true_label, pred_score))
-            # f1.append(f1_score(true_label, pred_label))
+            f1.append(f1_score(true_label, pred_label))
             m_loss.append(loss.item())
             auc.append(roc_auc_score(true_label, pred_score))
 
@@ -295,16 +319,16 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     val_acc, val_ap, val_f1, val_auc = eval_one_epoch('val for old nodes', tgan, val_rand_sampler, val_src_l,
                                                       val_dst_l, val_ts_l, val_label_l)
 
-    nn_val_acc, nn_val_ap, nn_val_f1, nn_val_auc = eval_one_epoch('val for new nodes', tgan, val_rand_sampler,
-                                                                  nn_val_src_l,
-                                                                  nn_val_dst_l, nn_val_ts_l, nn_val_label_l)
+    # nn_val_acc, nn_val_ap, nn_val_f1, nn_val_auc = eval_one_epoch('val for new nodes', tgan, val_rand_sampler,
+    #                                                               nn_val_src_l,
+    #                                                               nn_val_dst_l, nn_val_ts_l, nn_val_label_l)
 
     logger.info('epoch: {}:'.format(epoch))
     logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
-    logger.info('train acc: {}, val acc: {}, new node val acc: {}'.format(np.mean(acc), val_acc, nn_val_acc))
-    logger.info('train auc: {}, val auc: {}, new node val auc: {}'.format(np.mean(auc), val_auc, nn_val_auc))
-    logger.info('train ap: {}, val ap: {}, new node val ap: {}'.format(np.mean(ap), val_ap, nn_val_ap))
-    logger.info('train f1: {}, val f1: {}, new node val f1: {}'.format(np.mean(f1), val_f1, nn_val_f1))
+    logger.info('train acc: {}, val acc: {}'.format(np.mean(acc), val_acc))
+    logger.info('train auc: {}, val auc: {}'.format(np.mean(auc), val_auc))
+    logger.info('train ap: {}, val ap: {}'.format(np.mean(ap), val_ap))
+    logger.info('train f1: {}, val f1: {}'.format(np.mean(f1), val_f1))
 
     if early_stopper.early_stop_check(val_ap):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
@@ -322,13 +346,13 @@ tgan.ngh_finder = full_ngh_finder
 test_acc, test_ap, test_f1, test_auc = eval_one_epoch('test for old nodes', tgan, test_rand_sampler, test_src_l,
                                                       test_dst_l, test_ts_l, test_label_l)
 
-nn_test_acc, nn_test_ap, nn_test_f1, nn_test_auc = eval_one_epoch('test for new nodes', tgan, nn_test_rand_sampler,
-                                                                  nn_test_src_l, nn_test_dst_l, nn_test_ts_l,
-                                                                  nn_test_label_l)
+# nn_test_acc, nn_test_ap, nn_test_f1, nn_test_auc = eval_one_epoch('test for new nodes', tgan, nn_test_rand_sampler, nn_test_src_l, nn_test_dst_l, nn_test_ts_l, nn_test_label_l)
 
-logger.info('Test statistics: Old nodes -- acc: {}, auc: {}, ap: {}'.format(test_acc, test_auc, test_ap))
-logger.info('Test statistics: New nodes -- acc: {}, auc: {}, ap: {}'.format(nn_test_acc, nn_test_auc, nn_test_ap))
+logger.info('Test statistics: Old nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.format(test_acc, test_auc, test_ap, test_f1))
+# logger.info('Test statistics: New nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.format(nn_test_acc, nn_test_auc, nn_test_ap, nn_test_f1))
 
 logger.info('Saving TGAN model')
+MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-TGAT.pth'
+
 torch.save(tgan.state_dict(), MODEL_SAVE_PATH)
 logger.info('TGAN models saved')
