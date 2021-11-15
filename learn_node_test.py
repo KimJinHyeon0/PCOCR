@@ -45,25 +45,28 @@ class MEAN(torch.nn.Module):
         return self.fc_3(x)
 
 class LSTM(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, drop=0.3):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, drop=0.3):
         super().__init__()
+
 
         self.output_dim = output_dim
         self.num_layers = n_layer
         self.input_size = input_dim
         self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
+        self.fc_dim = fc_dim
+        self.seq_len = seq_len
 
         self.lstm = torch.nn.LSTM(input_size=self.input_size,
                                   hidden_size=self.hidden_dim,
                                   num_layers=self.num_layers,
-                                  bidirectional = self.bidirectional)
+                                  bidirectional= self.bidirectional)
 
         if bidirectional:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, fc_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
 
         else:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim, fc_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
 
 
         self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
@@ -71,9 +74,11 @@ class LSTM(torch.nn.Module):
         self.dropout = torch.nn.Dropout(drop)
 
     def forward(self, emb):
-
-        p2d = (0, 0, 0, MAX_SEQ - emb.shape[0])
-        embedded = torch.nn.functional.pad(emb, p2d)
+        if emb.shape[0] > self.seq_len:
+            embedded = emb[:self.seq_len, :]
+        else:
+            p2d = (0, 0, 0, self.seq_len - emb.shape[0])
+            embedded = torch.nn.functional.pad(emb, p2d)
         embedded = torch.unsqueeze(embedded, 1)
 
         output, (h_out, c_out) = self.lstm(embedded)
@@ -145,6 +150,7 @@ DATA = args.data
 CLASS_BALANCING = 'BALANCED'
 PRED_METHOD = 'LSTM'
 TRAINING_METHOD = 'SELECTIVE'
+SEQ_SLICING = True
 
 hidden_dim = 128
 fc_dim = 40
@@ -158,7 +164,6 @@ try:
     MODEL_NUM = saved_model.index[-1]+1
 except:
     MODEL_NUM = 0
-
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -215,7 +220,10 @@ test_e_idx_l = e_idx_l[test_flag]
 test_label_l = label_l[test_flag]
 
 temp = g_df[ts_l < time_cut].g_num.values
-MAX_SEQ = Counter(temp).most_common(1)[0][1]
+cntr = Counter(temp)
+MAX_SEQ = cntr.most_common(1)[0][1]
+if SEQ_SLICING:
+    MAX_SEQ = round(np.quantile(list(cntr.values()), 0.9))
 
 ### Initialize the data structure for graph and edge sampling
 adj_list = [[] for _ in range(max_idx + 1)]
@@ -253,7 +261,7 @@ logger.info('TGAN models loaded')
 logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
-lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, n_layer, bidirectional, fc_dim)
+lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, n_layer, bidirectional, fc_dim, MAX_SEQ)
 #lr_model = MEAN(n_feat.shape[1])
 
 lr_model = lr_model.to(device)
@@ -304,7 +312,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
             sliced_edge_len = np.append(sliced_edge_len, len(src_l_cut))
             true_label = np.append(true_label, label)
             pred_prob = np.append(pred_prob, lr_prob.cpu().numpy())
-            pred_label = np.append(pred_label, 1 if lr_prob >= 0.5 else 0)
+            pred_label = np.append(pred_label, round(lr_prob))
 
     label_ratio = sum(true_label)/len(true_label)
     acc = (true_label == pred_label).mean()
