@@ -59,6 +59,8 @@ def makeDict(subreddit):
         else:
             time_stamp = int(data[7])
 
+        if time_stamp < 0:
+            continue
     #key_sequence_dict
         if link_key in key_sequence_dict:
             key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
@@ -69,6 +71,8 @@ def makeDict(subreddit):
         key_sequence_dict[i].sort(key=lambda x: (x[2]))
 
 def makeSeq(subreddit):
+
+    idx = 0
 
     for post_key in list(key_sequence_dict.keys()):
         sequence = key_sequence_dict[post_key]
@@ -93,13 +97,13 @@ def makeSeq(subreddit):
 
             link_id = int(post_dict[link_key][0])
             link_ts = int(id_sequence_dict[link_id][0])
+            idx += 1
 
-
-            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts)]
+            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts, idx)]
 
 
 def makeDf(subreddit):
-    g_list, g_ts_list, u_list, i_list, ts_list, label_list = [], [], [], [], [], []
+    g_list, g_ts_list, u_list, i_list, ts_list, label_list, idx_list = [], [], [], [], [], [], []
 
     for key in id_sequence_dict:
         g_num = key
@@ -110,13 +114,14 @@ def makeDf(subreddit):
         temp = []
 
         for comment in seq[1:]:
-            u, i, ts = comment[:]
+            u, i, ts, idx = comment[:]
 
             g_list.append(g_num)
             g_ts_list.append(g_ts)
             u_list.append(u)
             i_list.append(i)
             ts_list.append(ts)
+            idx_list.append(idx)
 
             temp.append(i)
 
@@ -131,12 +136,12 @@ def makeDf(subreddit):
             label_list.append(label)
 
     df = pd.DataFrame({'g_num' : g_list,
-                         'g_ts' : g_ts_list,
-                         'u': u_list,
-                         'i': i_list,
-                         'ts': ts_list,
-                         'label': label_list})
-
+                       'g_ts' : g_ts_list,
+                       'u': u_list,
+                       'i': i_list,
+                       'ts': ts_list,
+                       'label': label_list,
+                       'idx': idx_list})
     return df
 
 
