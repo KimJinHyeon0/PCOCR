@@ -48,7 +48,6 @@ class LSTM(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, drop=0.3):
         super().__init__()
 
-
         self.output_dim = output_dim
         self.num_layers = n_layer
         self.input_size = input_dim
@@ -63,17 +62,20 @@ class LSTM(torch.nn.Module):
                                   bidirectional= self.bidirectional)
 
         if bidirectional:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
+            #self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.output_dim)
 
         else:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
+            #self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.output_dim)
 
 
-        self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
-        self.act = torch.nn.ReLU()
+        #self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
+        #self.act = torch.nn.ReLU()
         self.dropout = torch.nn.Dropout(drop)
 
     def forward(self, emb):
+
         if emb.shape[0] > self.seq_len:
             embedded = emb[:self.seq_len, :]
         else:
@@ -88,10 +90,10 @@ class LSTM(torch.nn.Module):
         else:
             h_out = self.dropout(h_out[-1, :, :])
 
-        h_out = self.act(self.fc_1(h_out))
-        h_out = self.dropout(h_out)
+        #h_out = self.act(self.fc_1(h_out))
+        #h_out = self.dropout(h_out)
 
-        return self.fc_2(h_out).squeeze(1)
+        return self.fc_1(h_out).squeeze(1)
 
 random.seed(222)
 np.random.seed(222)
@@ -99,7 +101,7 @@ torch.manual_seed(222)
 
 ### Argument and global variables
 parser = argparse.ArgumentParser('Interface for TGAT experiments on node classification')
-parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='showerthoughts')
+parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='iama')
 parser.add_argument('--bs', type=int, default=30, help='batch_size')
 parser.add_argument('--prefix', type=str, default='')
 parser.add_argument('--n_degree', type=int, default=50, help='number of neighbors to sample')
@@ -107,7 +109,7 @@ parser.add_argument('--n_neg', type=int, default=1)
 parser.add_argument('--n_head', type=int, default=2)
 parser.add_argument('--n_epoch', type=int, default=15, help='number of epochs')
 parser.add_argument('--n_layer', type=int, default=2)
-parser.add_argument('--lr', type=float, default=1e-4)
+parser.add_argument('--lr', type=float, default=3e-4)
 parser.add_argument('--tune', action='store_true', help='parameters tunning mode, use train-test split on training data only.')
 parser.add_argument('--drop_out', type=float, default=0.1, help='dropout probability')
 parser.add_argument('--gpu', type=int, default=0, help='idx for the gpu to use')
@@ -150,13 +152,22 @@ DATA = args.data
 CLASS_BALANCING = 'BALANCED'
 PRED_METHOD = 'LSTM'
 TRAINING_METHOD = 'SELECTIVE'
-SEQ_SLICING = True
 
-hidden_dim = 128
-fc_dim = 40
-output_dim = 1
-n_layer = 1
-bidirectional = False
+if PRED_METHOD == 'LSTM':
+    SEQ_SLICING = 0.9
+    hidden_dim = 128
+    fc_dim = 40
+    output_dim = 1
+    n_layer = 1
+    bidirectional = True
+
+else:
+    SEQ_SLICING = None
+    hidden_dim = None
+    fc_dim = None
+    output_dim = None
+    n_layer = None
+    bidirectional = None
 ############################
 
 try:
@@ -186,8 +197,8 @@ e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
 n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
 train_time = 3888000
-tgat_time_cut = 7200
-time_cut = 7200
+tgat_time_cut = 345600
+time_cut = 345600
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -223,7 +234,7 @@ temp = g_df[ts_l < time_cut].g_num.values
 cntr = Counter(temp)
 MAX_SEQ = cntr.most_common(1)[0][1]
 if SEQ_SLICING:
-    MAX_SEQ = round(np.quantile(list(cntr.values()), 0.9))
+    MAX_SEQ = round(np.quantile(list(cntr.values()), SEQ_SLICING))
 
 ### Initialize the data structure for graph and edge sampling
 adj_list = [[] for _ in range(max_idx + 1)]
@@ -254,7 +265,7 @@ logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
 
 logger.info('loading saved TGAN model')
 #model_path = f'./saved_models/{MODEL_NUM}-TGAT.pth'
-model_path = f'./saved_models/6-TGAT.pth'
+model_path = f'./saved_models/4-TGAT.pth'
 tgan.load_state_dict(torch.load(model_path))
 tgan.eval()
 logger.info('TGAN models loaded')
@@ -312,7 +323,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
             sliced_edge_len = np.append(sliced_edge_len, len(src_l_cut))
             true_label = np.append(true_label, label)
             pred_prob = np.append(pred_prob, lr_prob.cpu().numpy())
-            pred_label = np.append(pred_label, round(lr_prob))
+            pred_label = np.append(pred_label, np.round(lr_prob.cpu().numpy()))
 
     label_ratio = sum(true_label)/len(true_label)
     acc = (true_label == pred_label).mean()
@@ -329,6 +340,10 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                                             'TGAT_TIME_CUT': tgat_time_cut,
                                             'PRED_TIME_CUT' : time_cut,
                                             'PRED_METHOD': PRED_METHOD,
+                                            'BIDIRECTTIONAL' : bidirectional,
+                                            'NUM_LAYER' : num_layer,
+                                            'NUM_FC' : 1,
+                                            'MAX_SEQ_QUANTILE' : SEQ_SLICING,
                                             'TRAINING_METHOD': TRAINING_METHOD,
                                             'CLASS_BALANCING' : CLASS_BALANCING,
                                             'NUM_GRAPH': len(graph_num),
@@ -419,10 +434,10 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_optimizer.step()
 
 
-    train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
+    #train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
     test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 0)
     #torch.save(lr_model.state_dict(), './saved_models/edge_{}_wkiki_node_class.pth'.format(DATA))
-    logger.info(f'train acc: {train_acc}, train auc: {train_auc}, train AP: {train_AP}, train Recall_Score: {train_recall}, train F1: {train_F1}')
+    #logger.info(f'train acc: {train_acc}, train auc: {train_auc}, train AP: {train_AP}, train Recall_Score: {train_recall}, train F1: {train_F1}')
     logger.info(f'test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
