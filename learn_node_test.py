@@ -1,13 +1,5 @@
 """Unified interface to all dynamic graph model experiments"""
 
-'''
-class imbalance test
-
-adjusted amount of training graph.
-random sampled majority classes with num of minority class's graph 
-'''
-
-import math
 import logging
 import time
 import sys
@@ -23,7 +15,7 @@ from collections import Counter
 
 from module import TGAN
 from graph import NeighborFinder
-
+from utils import EarlyStopMonitor
 
 
 class MEAN(torch.nn.Module):
@@ -44,8 +36,10 @@ class MEAN(torch.nn.Module):
         x = self.dropout(x)
         return self.fc_3(x)
 
+
 class LSTM(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, sampling_method, drop=0.3):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, sampling_method,
+                 drop=0.3):
         super().__init__()
 
         self.output_dim = output_dim
@@ -60,19 +54,16 @@ class LSTM(torch.nn.Module):
         self.lstm = torch.nn.LSTM(input_size=self.input_size,
                                   hidden_size=self.hidden_dim,
                                   num_layers=self.num_layers,
-                                  bidirectional= self.bidirectional)
+                                  bidirectional=self.bidirectional)
 
         if bidirectional:
-            #self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
-            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.output_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
 
         else:
-            #self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
-            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.output_dim)
+            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
 
-
-        #self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
-        #self.act = torch.nn.ReLU()
+        self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
+        self.act = torch.nn.ReLU()
         self.dropout = torch.nn.Dropout(drop)
 
     def forward(self, emb):
@@ -84,9 +75,10 @@ class LSTM(torch.nn.Module):
             elif sampling_method == 'OLDEST':
                 embedded = emb[:self.seq_len, :]
 
-            elif sampling_method == 'RANOM':
+            elif sampling_method == 'RANDOM':
                 sampled_idx = np.sort(np.random.choice(len(emb), self.seq_len, replace=True))
                 embedded = torch.vstack([emb[sampled_idx]])
+
         else:
             p2d = (0, 0, 0, self.seq_len - emb.shape[0])
             embedded = torch.nn.functional.pad(emb, p2d)
@@ -99,14 +91,16 @@ class LSTM(torch.nn.Module):
         else:
             h_out = self.dropout(h_out[-1, :, :])
 
-        #h_out = self.act(self.fc_1(h_out))
-        #h_out = self.dropout(h_out)
+        h_out = self.act(self.fc_1(h_out))
+        h_out = self.dropout(h_out)
 
-        return self.fc_1(h_out).squeeze(1)
+        return self.fc_2(h_out).squeeze(1)
+
 
 random.seed(222)
 np.random.seed(222)
 torch.manual_seed(222)
+
 
 ### Argument and global variables
 parser = argparse.ArgumentParser('Interface for TGAT experiments on node classification')
@@ -186,6 +180,10 @@ try:
 except:
     MODEL_NUM = 0
 
+MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
+get_checkpoint_path = lambda \
+    epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
+
 ### set up logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
@@ -207,8 +205,9 @@ e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
 n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
 train_time = 3888000
+test_time = np.quantile(g_df[g_df['g_ts'] > train_time].g_ts, 0.5)
 tgat_time_cut = 345600
-time_cut = 345600
+time_cut = 86400
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -222,7 +221,8 @@ max_src_index = src_l.max()
 max_idx = max(src_l.max(), dst_l.max())
 
 train_flag = (g_ts < train_time)
-test_flag = (g_ts >= train_time)
+test_flag = (g_ts >= train_time) & (g_ts < test_time)
+val_flag = (g_ts >= test_time)
 
 logger.info('Training use all train data')
 train_g_num_l = g_num[train_flag]
@@ -239,6 +239,13 @@ test_dst_l = dst_l[test_flag]
 test_ts_l = ts_l[test_flag]
 test_e_idx_l = e_idx_l[test_flag]
 test_label_l = label_l[test_flag]
+
+val_g_num_l = g_num[val_flag]
+val_src_l = src_l[val_flag]
+val_dst_l = dst_l[val_flag]
+val_ts_l = ts_l[val_flag]
+val_label_l = label_l[val_flag]
+val_e_idx_l = e_idx_l[val_flag]
 
 temp = g_df[ts_l < time_cut].g_num.values
 cntr = Counter(temp)
@@ -291,6 +298,8 @@ tgan.ngh_finder = full_ngh_finder
 lr_criterion = torch.nn.BCELoss()
 lr_criterion_eval = torch.nn.BCELoss()
 
+early_stopper = EarlyStopMonitor()
+
 def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_LAYER):
 
     graph_num = np.array([])
@@ -322,7 +331,6 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                 continue
 
             src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, num_layer)
-
             src_label = torch.tensor([label]).float().to(device)
 
             lr_prob = lr_model(src_embed).sigmoid()
@@ -345,7 +353,6 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
     if data_type:
         # save performance
-
         new_model = pd.DataFrame.from_dict([{'SUBREDDIT': DATA,
                                             'TGAT_TIME_CUT': tgat_time_cut,
                                             'PRED_TIME_CUT' : time_cut,
@@ -366,7 +373,6 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                                             'AP_SCORE': AP,
                                             'RECALL_SCORE': recall,
                                             'F1_SCORE': F1}])
-
         try:
             saved_model = pd.read_csv('./saved_models/model_perfomance_eval.csv', index_col=0)
             updated_model = saved_model.append(new_model)
@@ -444,13 +450,27 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_loss.backward()
         lr_optimizer.step()
 
-
-    #train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
-    test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 0)
+    train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
+    val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_ts_l, val_g_num_l, lr_model, tgan, 0)
     #torch.save(lr_model.state_dict(), './saved_models/edge_{}_wkiki_node_class.pth'.format(DATA))
-    #logger.info(f'train acc: {train_acc}, train auc: {train_auc}, train AP: {train_AP}, train Recall_Score: {train_recall}, train F1: {train_F1}')
-    logger.info(f'test_loss : {test_loss}, test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+    logger.info('epoch: {}:'.format(epoch))
+    logger.info('train loss: {}, val loss: {}'.format(train_loss, val_loss))
+    logger.info('train acc: {}, val acc: {}'.format(train_acc, val_acc))
+    logger.info('train auc: {}, val auc: {}'.format(train_auc, val_auc))
+    logger.info('train ap: {}, val ap: {}'.format(train_AP, val_AP))
+    logger.info('train f1: {}, val f1: {}'.format(train_F1, val_F1))
+
+    if early_stopper.early_stop_check(val_AP):
+        logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
+        logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
+        best_model_path = get_checkpoint_path(early_stopper.best_epoch)
+        tgan.load_state_dict(torch.load(best_model_path))
+        logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
+        tgan.eval()
+        break
+    else:
+        torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
-torch.save(lr_model.state_dict(), './saved_models/{}-{}.pth'.format(MODEL_NUM, 'PREDICT'))
-logger.info(f'test_loss : {test_loss}, test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+torch.save(lr_model.state_dict(), MODEL_SAVE_PATH)
