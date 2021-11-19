@@ -45,7 +45,7 @@ class MEAN(torch.nn.Module):
         return self.fc_3(x)
 
 class LSTM(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, drop=0.3):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, sampling_method, drop=0.3):
         super().__init__()
 
         self.output_dim = output_dim
@@ -55,6 +55,7 @@ class LSTM(torch.nn.Module):
         self.bidirectional = bidirectional
         self.fc_dim = fc_dim
         self.seq_len = seq_len
+        self.sampling_method = sampling_method
 
         self.lstm = torch.nn.LSTM(input_size=self.input_size,
                                   hidden_size=self.hidden_dim,
@@ -77,7 +78,15 @@ class LSTM(torch.nn.Module):
     def forward(self, emb):
 
         if emb.shape[0] > self.seq_len:
-            embedded = emb[:self.seq_len, :]
+            if sampling_method == 'NEWEST':
+                embedded = emb[-self.seq_len:, :]
+
+            elif sampling_method == 'OLDEST':
+                embedded = emb[:self.seq_len, :]
+
+            elif sampling_method == 'RANOM':
+                sampled_idx = np.sort(np.random.choice(len(emb), self.seq_len, replace=True))
+                embedded = torch.vstack([emb[sampled_idx]])
         else:
             p2d = (0, 0, 0, self.seq_len - emb.shape[0])
             embedded = torch.nn.functional.pad(emb, p2d)
@@ -160,7 +169,7 @@ if PRED_METHOD == 'LSTM':
     output_dim = 1
     n_layer = 1
     bidirectional = True
-
+    sampling_method = 'NEWEST'
 else:
     SEQ_SLICING = None
     hidden_dim = None
@@ -168,6 +177,7 @@ else:
     output_dim = None
     n_layer = None
     bidirectional = None
+    sampling_method = None
 ############################
 
 try:
@@ -272,7 +282,7 @@ logger.info('TGAN models loaded')
 logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
-lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, n_layer, bidirectional, fc_dim, MAX_SEQ)
+lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, n_layer, bidirectional, fc_dim, MAX_SEQ, sampling_method)
 #lr_model = MEAN(n_feat.shape[1])
 
 lr_model = lr_model.to(device)
@@ -340,6 +350,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                                             'TGAT_TIME_CUT': tgat_time_cut,
                                             'PRED_TIME_CUT' : time_cut,
                                             'PRED_METHOD': PRED_METHOD,
+                                            'SAMPLING_METHOD' : sampling_method,
                                             'BIDIRECTTIONAL' : bidirectional,
                                             'NUM_LAYER' : num_layer,
                                             'NUM_FC' : 1,
@@ -438,8 +449,8 @@ for epoch in tqdm(range(args.n_epoch)):
     test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 0)
     #torch.save(lr_model.state_dict(), './saved_models/edge_{}_wkiki_node_class.pth'.format(DATA))
     #logger.info(f'train acc: {train_acc}, train auc: {train_auc}, train AP: {train_AP}, train Recall_Score: {train_recall}, train F1: {train_F1}')
-    logger.info(f'test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+    logger.info(f'test_loss : {test_loss}, test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
 torch.save(lr_model.state_dict(), './saved_models/{}-{}.pth'.format(MODEL_NUM, 'PREDICT'))
-logger.info(f'test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+logger.info(f'test_loss : {test_loss}, test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
