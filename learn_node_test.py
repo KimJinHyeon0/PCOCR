@@ -360,26 +360,27 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
     if data_type:
         # save performance
-        new_model = pd.DataFrame.from_dict([{'SUBREDDIT': DATA,
-                                            'TGAT_TIME_CUT': tgat_time_cut,
-                                            'PRED_TIME_CUT' : time_cut,
-                                            'PRED_METHOD': PRED_METHOD,
-                                            'SAMPLING_METHOD' : sampling_method,
-                                            'BIDIRECTTIONAL' : bidirectional,
-                                            'NUM_LAYER' : lstm_layer,
-                                            'NUM_FC' : NUM_FC,
-                                            'MAX_SEQ_QUANTILE' : SEQ_SLICING,
-                                            'TRAINING_METHOD': TRAINING_METHOD,
-                                            'CLASS_BALANCING' : CLASS_BALANCING,
-                                            'NUM_GRAPH': len(graph_num),
-                                            'RAW_EDGE_NUM': sum(raw_edge_len),
-                                            'USED_EDGE_NUM': sum(sliced_edge_len),
-                                            'LABEL_RATIO' : label_ratio,
-                                            'ACCURACY' : acc,
-                                            'AUC_ROC_SCORE': auc_roc,
-                                            'AP_SCORE': AP,
-                                            'RECALL_SCORE': recall,
-                                            'F1_SCORE': F1}])
+        new = [{'SUBREDDIT': DATA,
+               'TGAT_TIME_CUT': tgat_time_cut,
+               'PRED_TIME_CUT' : time_cut,
+               'PRED_METHOD': PRED_METHOD,
+               'SAMPLING_METHOD' : sampling_method,
+               'BIDIRECTTIONAL' : bidirectional,
+               'NUM_LAYER' : num_layer,
+               'NUM_FC' : 1,
+               'MAX_SEQ_QUANTILE' : SEQ_SLICING,
+               'TRAINING_METHOD': TRAINING_METHOD,
+               'CLASS_BALANCING' : CLASS_BALANCING,
+               'NUM_GRAPH': len(graph_num),
+               'RAW_EDGE_NUM': sum(raw_edge_len),
+               'USED_EDGE_NUM': sum(sliced_edge_len),
+               'LABEL_RATIO' : label_ratio,
+               'ACCURACY' : acc,
+               'AUC_ROC_SCORE': auc_roc,
+               'AP_SCORE': AP,
+               'RECALL_SCORE': recall,
+               'F1_SCORE': F1}]
+        new_model = pd.DataFrame.from_dict(new)
         try:
             saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
             updated_model = saved_model.append(new_model)
