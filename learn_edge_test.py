@@ -1,15 +1,14 @@
+import os
 import math
 import logging
 import time
 import random
 import sys
 import argparse
-import pickle
 
 import torch
 import pandas as pd
 import numpy as np
-# import numba
 
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, recall_score
 
@@ -20,7 +19,7 @@ from utils import EarlyStopMonitor, RandEdgeSampler
 
 ### Argument and global variables
 parser = argparse.ArgumentParser('Interface for TGAT experiments on link predictions')
-parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='showerthoughts')
+parser.add_argument('-d', '--data', type=str, help='data sources to use, try wikipedia or reddit', default='news')
 parser.add_argument('--bs', type=int, default=200, help='batch_size')
 parser.add_argument('--prefix', type=str, default='', help='prefix to name the checkpoints')
 parser.add_argument('--n_degree', type=int, default=20, help='number of neighbors to sample')
@@ -66,16 +65,19 @@ NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 
 TRAINING_METHOD = 'SELECTIVE'
-time_cut = 7200
+time_cut = 3900
+max_round = 5
 
+MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
 try:
-    saved_model = pd.read_csv('./saved_models/model_perfomance_eval.csv', index_col=0)
+    saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
     MODEL_NUM = saved_model.index[-1]+1
 except:
     MODEL_NUM = 0
 
+MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-TGAT.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{MODEL_NUM}-{args.data}-{time_cut}-{TRAINING_METHOD}-{epoch}.pth'
+    epoch: f'./saved_checkpoints/{MODEL_NUM}-TGAT-{epoch}.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -243,9 +245,9 @@ for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
 
 train_rand_sampler = RandEdgeSampler(train_src_l, train_dst_l)
-val_rand_sampler = RandEdgeSampler(src_l, dst_l)
+val_rand_sampler = RandEdgeSampler(val_src_l, val_dst_l)
 # nn_val_rand_sampler = RandEdgeSampler(nn_val_src_l, nn_val_dst_l)
-test_rand_sampler = RandEdgeSampler(src_l, dst_l)
+test_rand_sampler = RandEdgeSampler(test_src_l, test_dst_l)
 # nn_test_rand_sampler = RandEdgeSampler(nn_test_src_l, nn_test_dst_l)
 
 ### Model initialize
@@ -266,7 +268,7 @@ logger.info('num of batches per epoch: {}'.format(num_batch))
 
 idx_list = np.arange(num_instance)  # 0 ~ num_instance
 np.random.shuffle(idx_list)
-early_stopper = EarlyStopMonitor()
+early_stopper = EarlyStopMonitor(max_round)
 
 for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     # Training
@@ -330,16 +332,25 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     logger.info('train ap: {}, val ap: {}'.format(np.mean(ap), val_ap))
     logger.info('train f1: {}, val f1: {}'.format(np.mean(f1), val_f1))
 
-    if early_stopper.early_stop_check(val_ap):
+    cp_num = epoch - max_round
+
+    if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
         logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
         best_model_path = get_checkpoint_path(early_stopper.best_epoch)
         tgan.load_state_dict(torch.load(best_model_path))
         logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
         tgan.eval()
+        for i in range(cp_num, epoch):
+            if i >= 0:
+                os.remove(get_checkpoint_path(i))
+                logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, i))
         break
     else:
         torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
+        if cp_num >= 0:
+            os.remove(get_checkpoint_path(cp_num))
+            logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, cp_num))
 
 # testing phase use all information
 tgan.ngh_finder = full_ngh_finder
@@ -352,7 +363,5 @@ logger.info('Test statistics: Old nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.for
 # logger.info('Test statistics: New nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.format(nn_test_acc, nn_test_auc, nn_test_ap, nn_test_f1))
 
 logger.info('Saving TGAN model')
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-TGAT.pth'
-
 torch.save(tgan.state_dict(), MODEL_SAVE_PATH)
 logger.info('TGAN models saved')

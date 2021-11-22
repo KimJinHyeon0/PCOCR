@@ -1,5 +1,5 @@
 """Unified interface to all dynamic graph model experiments"""
-
+import os
 import logging
 import time
 import sys
@@ -38,12 +38,12 @@ class MEAN(torch.nn.Module):
 
 
 class LSTM(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layer, bidirectional, fc_dim, seq_len, sampling_method,
+    def __init__(self, input_dim, hidden_dim, output_dim, lstm_layer, bidirectional, fc_dim, seq_len, sampling_method,
                  drop=0.3):
         super().__init__()
 
         self.output_dim = output_dim
-        self.num_layers = n_layer
+        self.num_layers = lstm_layer
         self.input_size = input_dim
         self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
@@ -110,7 +110,7 @@ parser.add_argument('--prefix', type=str, default='')
 parser.add_argument('--n_degree', type=int, default=50, help='number of neighbors to sample')
 parser.add_argument('--n_neg', type=int, default=1)
 parser.add_argument('--n_head', type=int, default=2)
-parser.add_argument('--n_epoch', type=int, default=15, help='number of epochs')
+parser.add_argument('--n_epoch', type=int, default=50, help='number of epochs')
 parser.add_argument('--n_layer', type=int, default=2)
 parser.add_argument('--lr', type=float, default=3e-4)
 parser.add_argument('--tune', action='store_true', help='parameters tunning mode, use train-test split on training data only.')
@@ -155,27 +155,32 @@ DATA = args.data
 CLASS_BALANCING = 'BALANCED'
 PRED_METHOD = 'LSTM'
 TRAINING_METHOD = 'SELECTIVE'
+max_round = 5
 
 if PRED_METHOD == 'LSTM':
     SEQ_SLICING = 0.9
     hidden_dim = 128
     fc_dim = 40
     output_dim = 1
-    n_layer = 1
+    lstm_layer = 1
     bidirectional = True
     sampling_method = 'NEWEST'
+    NUM_FC = 2
+
 else:
     SEQ_SLICING = None
     hidden_dim = None
     fc_dim = None
     output_dim = None
-    n_layer = None
+    lstm_layer = None
     bidirectional = None
     sampling_method = None
+    NUM_FC = None
 ############################
 
+MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
 try:
-    saved_model = pd.read_csv('./saved_models/model_perfomance_eval.csv', index_col=0)
+    saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
     MODEL_NUM = saved_model.index[-1]+1
 except:
     MODEL_NUM = 0
@@ -289,8 +294,10 @@ logger.info('TGAN models loaded')
 logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
-lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, n_layer, bidirectional, fc_dim, MAX_SEQ, sampling_method)
-#lr_model = MEAN(n_feat.shape[1])
+if PRED_METHOD == 'LSTM':
+    lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, lstm_layer, bidirectional, fc_dim, MAX_SEQ, sampling_method)
+elif PRED_METHOD == 'MEAN':
+    lr_model = MEAN(n_feat.shape[1])
 
 lr_model = lr_model.to(device)
 lr_optimizer = torch.optim.Adam(lr_model.parameters(), lr=args.lr)
@@ -359,8 +366,8 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                                             'PRED_METHOD': PRED_METHOD,
                                             'SAMPLING_METHOD' : sampling_method,
                                             'BIDIRECTTIONAL' : bidirectional,
-                                            'NUM_LAYER' : num_layer,
-                                            'NUM_FC' : 1,
+                                            'NUM_LAYER' : lstm_layer,
+                                            'NUM_FC' : NUM_FC,
                                             'MAX_SEQ_QUANTILE' : SEQ_SLICING,
                                             'TRAINING_METHOD': TRAINING_METHOD,
                                             'CLASS_BALANCING' : CLASS_BALANCING,
@@ -374,12 +381,12 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                                             'RECALL_SCORE': recall,
                                             'F1_SCORE': F1}])
         try:
-            saved_model = pd.read_csv('./saved_models/model_perfomance_eval.csv', index_col=0)
+            saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
             updated_model = saved_model.append(new_model)
             updated_model = updated_model.reset_index(drop=True)
-            updated_model.to_csv('./saved_models/model_perfomance_eval.csv')
+            updated_model.to_csv(MODEL_PERFORMANCE_PATH)
         except:
-            new_model.to_csv('./saved_models/model_perfomance_eval.csv')
+            new_model.to_csv(MODEL_PERFORMANCE_PATH)
 
         #save model details
         df = pd.DataFrame({'g_num' : graph_num,
@@ -460,16 +467,25 @@ for epoch in tqdm(range(args.n_epoch)):
     logger.info('train ap: {}, val ap: {}'.format(train_AP, val_AP))
     logger.info('train f1: {}, val f1: {}'.format(train_F1, val_F1))
 
-    if early_stopper.early_stop_check(val_AP):
+    cp_num = epoch - max_round
+
+    if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
         logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
         best_model_path = get_checkpoint_path(early_stopper.best_epoch)
         tgan.load_state_dict(torch.load(best_model_path))
         logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
         tgan.eval()
+        for i in range(cp_num, epoch):
+            if i >= 0:
+                os.remove(get_checkpoint_path(i))
+                logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
         break
     else:
         torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
+        if cp_num >= 0:
+            os.remove(get_checkpoint_path(cp_num))
+            logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, cp_num))
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
 logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
