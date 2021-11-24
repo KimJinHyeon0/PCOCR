@@ -332,25 +332,26 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     logger.info('train ap: {}, val ap: {}'.format(np.mean(ap), val_ap))
     logger.info('train f1: {}, val f1: {}'.format(np.mean(f1), val_f1))
 
-    cp_num = epoch - max_round
-
     if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
-        logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
-        best_model_path = get_checkpoint_path(early_stopper.best_epoch)
+        best_epoch = early_stopper.best_epoch
+        logger.info(f'Loading the best model at epoch {best_epoch}')
+        best_model_path = get_checkpoint_path(best_epoch)
         tgan.load_state_dict(torch.load(best_model_path))
-        logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
+        logger.info(f'Loaded the best model at epoch {best_epoch} for inference')
         tgan.eval()
-        for i in range(cp_num, epoch):
-            if i >= 0:
-                os.remove(get_checkpoint_path(i))
-                logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, i))
+        os.remove(best_model_path)
+        logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, best_epoch))
         break
     else:
-        torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
-        if cp_num >= 0:
-            os.remove(get_checkpoint_path(cp_num))
-            logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, cp_num))
+        if early_stopper.is_best:
+            torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
+            for i in range(epoch):
+                try:
+                    os.remove(get_checkpoint_path(i))
+                    logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, i))
+                except:
+                    continue
 
 # testing phase use all information
 tgan.ngh_finder = full_ngh_finder

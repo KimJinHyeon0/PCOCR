@@ -6,12 +6,13 @@ class EarlyStopMonitor(object):
         self.max_round = max_round
         self.num_round = 0
 
-        self.epoch_count = 0
+        self.epoch_count = -1
         self.best_epoch = 0
 
         self.last_best = None
         self.higher_better = higher_better
         self.tolerance = tolerance
+        self.is_best = False
 
     def early_stop_check(self, curr_val):
         self.epoch_count += 1
@@ -21,14 +22,18 @@ class EarlyStopMonitor(object):
 
         if self.last_best is None:
             self.last_best = curr_val
+            self.is_best = True
 
         elif (curr_val - self.last_best) / np.abs(self.last_best) > self.tolerance:
             self.last_best = curr_val
             self.num_round = 0
             self.best_epoch = self.epoch_count
+            self.is_best = True
 
         else:
             self.num_round += 1
+            self.is_best = False
+
         return self.num_round >= self.max_round
 
 class RandEdgeSampler(object):
