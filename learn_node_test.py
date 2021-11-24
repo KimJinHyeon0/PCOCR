@@ -38,33 +38,45 @@ class MEAN(torch.nn.Module):
 
 
 class LSTM(torch.nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, lstm_layer, bidirectional, fc_dim, seq_len, sampling_method,
-                 drop=0.3):
+    def __init__(self, input_dim, hidden_dim, output_dim, lstm_layer, bidirectional,
+                 fc_dim, seq_len, sampling_method, NUM_FC, attention, drop=0.3):
         super().__init__()
 
         self.output_dim = output_dim
-        self.num_layers = lstm_layer
+        self.num_layers = int(lstm_layer)
         self.input_size = input_dim
         self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
         self.fc_dim = fc_dim
         self.seq_len = seq_len
         self.sampling_method = sampling_method
+        self.NUM_FC = NUM_FC
+        self.ATTENTION = attention
 
         self.lstm = torch.nn.LSTM(input_size=self.input_size,
                                   hidden_size=self.hidden_dim,
                                   num_layers=self.num_layers,
                                   bidirectional=self.bidirectional)
+        if NUM_FC == 2:
+            if bidirectional:
+                self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
 
-        if bidirectional:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.fc_dim)
+            else:
+                self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
 
-        else:
-            self.fc_1 = torch.nn.Linear(self.hidden_dim, self.fc_dim)
+            self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
 
-        self.fc_2 = torch.nn.Linear(fc_dim, self.output_dim)
+
+        elif NUM_FC == 1:
+            if bidirectional:
+                self.fc_1 = torch.nn.Linear(self.hidden_dim * 2, self.output_dim)
+
+            else:
+                self.fc_1 = torch.nn.Linear(self.hidden_dim, self.output_dim)
+
         self.act = torch.nn.ReLU()
         self.dropout = torch.nn.Dropout(drop)
+        self.softmax = torch.nn.Softmax(dim=0)
 
     def forward(self, emb):
 
@@ -91,10 +103,22 @@ class LSTM(torch.nn.Module):
         else:
             h_out = self.dropout(h_out[-1, :, :])
 
-        h_out = self.act(self.fc_1(h_out))
-        h_out = self.dropout(h_out)
+        if self.ATTENTION:
+            output = output[:, -1, :]
+            context_v = h_out.view([-1, 1])
 
-        return self.fc_2(h_out).squeeze(1)
+            attn_score = self.softmax(torch.mm(output, context_v)).view([1, -1])
+            h_out = self.dropout(torch.matmul(attn_score, output))
+
+        if self.NUM_FC == 2:
+            h_out = self.act(self.fc_1(h_out))
+            h_out = self.dropout(h_out)
+            result = self.fc_2(h_out)
+
+        elif self.NUM_FC == 1:
+            result = self.fc_1(h_out)
+
+        return result.squeeze(1)
 
 
 random.seed(222)
@@ -149,45 +173,52 @@ LEARNING_RATE = args.lr
 NODE_LAYER = 1
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
-
-#############################
-DATA = args.data
-CLASS_BALANCING = 'BALANCED'
-PRED_METHOD = 'LSTM'
-TRAINING_METHOD = 'SELECTIVE'
 max_round = 5
 
-if PRED_METHOD == 'LSTM':
-    SEQ_SLICING = 0.9
-    hidden_dim = 128
-    fc_dim = 40
-    output_dim = 1
-    lstm_layer = 1
-    bidirectional = True
-    sampling_method = 'NEWEST'
-    NUM_FC = 2
-
-else:
-    SEQ_SLICING = None
-    hidden_dim = None
-    fc_dim = None
-    output_dim = None
-    lstm_layer = None
-    bidirectional = None
-    sampling_method = None
-    NUM_FC = None
-############################
+#############################
+test_list = pd.read_csv('test_list.csv', index_col=0)
 
 MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
 try:
     saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
-    MODEL_NUM = saved_model.index[-1]+1
+    MODEL_NUM = saved_model.index[-1] + 1
 except:
     MODEL_NUM = 0
 
+spec = test_list.loc[MODEL_NUM]
+
+DATA, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, bidirectional, \
+lstm_layer, NUM_FC, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:11]
+hidden_dim = 128
+fc_dim = 32
+output_dim = 1
+if MODEL_NUM < 12:
+    tgat_num = MODEL_NUM
+else:
+    if DATA == 'iama':
+        if TRAINING_METHOD == 'SELECTIVE':
+            tgat_num = 1
+        elif TRAINING_METHOD == 'FULL':
+            tgat_num = 4
+    elif DATA == 'showerthoughts':
+        if TRAINING_METHOD == 'SELECTIVE':
+            tgat_num = 6
+        elif TRAINING_METHOD == 'FULL':
+            tgat_num = 9
+
+if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
+    SEQ_SLICING = None
+    hidden_dim = None
+    fc_dim = None
+    output_dim = None
+    n_layer = None
+    bidirectional = None
+    sampling_method = None
+############################
+
 MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
+        epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -211,8 +242,7 @@ n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
 train_time = 3888000
 test_time = np.quantile(g_df[g_df['g_ts'] > train_time].g_ts, 0.5)
-tgat_time_cut = 345600
-time_cut = 86400
+
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -287,7 +317,7 @@ logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
 
 logger.info('loading saved TGAN model')
 #model_path = f'./saved_models/{MODEL_NUM}-TGAT.pth'
-model_path = f'./saved_models/4-TGAT.pth'
+model_path = f'./saved_models/{tgat_num}-TGAT.pth'
 tgan.load_state_dict(torch.load(model_path))
 tgan.eval()
 logger.info('TGAN models loaded')
@@ -295,7 +325,11 @@ logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
 if PRED_METHOD == 'LSTM':
-    lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, lstm_layer, bidirectional, fc_dim, MAX_SEQ, sampling_method)
+    lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, lstm_layer, bidirectional,
+                    fc_dim, MAX_SEQ, sampling_method, NUM_FC, False)
+elif PRED_METHOD == 'ATTENTION':
+    lr_model = LSTM(n_feat.shape[1], hidden_dim, output_dim, lstm_layer, bidirectional,
+                    fc_dim, MAX_SEQ, sampling_method, NUM_FC, True)
 elif PRED_METHOD == 'MEAN':
     lr_model = MEAN(n_feat.shape[1])
 
@@ -305,7 +339,7 @@ tgan.ngh_finder = full_ngh_finder
 lr_criterion = torch.nn.BCELoss()
 lr_criterion_eval = torch.nn.BCELoss()
 
-early_stopper = EarlyStopMonitor()
+early_stopper = EarlyStopMonitor(max_round)
 
 def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_LAYER):
 
@@ -366,8 +400,8 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
                'PRED_METHOD': PRED_METHOD,
                'SAMPLING_METHOD' : sampling_method,
                'BIDIRECTTIONAL' : bidirectional,
-               'NUM_LAYER' : num_layer,
-               'NUM_FC' : 1,
+               'NUM_LAYER' : lstm_layer,
+               'NUM_FC' : NUM_FC,
                'MAX_SEQ_QUANTILE' : SEQ_SLICING,
                'TRAINING_METHOD': TRAINING_METHOD,
                'CLASS_BALANCING' : CLASS_BALANCING,
@@ -468,25 +502,28 @@ for epoch in tqdm(range(args.n_epoch)):
     logger.info('train ap: {}, val ap: {}'.format(train_AP, val_AP))
     logger.info('train f1: {}, val f1: {}'.format(train_F1, val_F1))
 
-    cp_num = epoch - max_round
 
     if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
-        logger.info(f'Loading the best model at epoch {early_stopper.best_epoch}')
-        best_model_path = get_checkpoint_path(early_stopper.best_epoch)
-        tgan.load_state_dict(torch.load(best_model_path))
-        logger.info(f'Loaded the best model at epoch {early_stopper.best_epoch} for inference')
-        tgan.eval()
-        for i in range(cp_num, epoch):
-            if i >= 0:
-                os.remove(get_checkpoint_path(i))
-                logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
+        best_epoch = early_stopper.best_epoch
+        logger.info(f'Loading the best model at epoch {best_epoch}')
+        best_model_path = get_checkpoint_path(best_epoch)
+        lr_model.load_state_dict(torch.load(best_model_path))
+        logger.info(f'Loaded the best model at epoch {best_epoch} for inference')
+        lr_model.eval()
+        os.remove(best_model_path)
+        logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, best_epoch))
         break
     else:
-        torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
-        if cp_num >= 0:
-            os.remove(get_checkpoint_path(cp_num))
-            logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, cp_num))
+        if early_stopper.is_best:
+            torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
+            for i in range(epoch):
+                try:
+                    os.remove(get_checkpoint_path(i))
+                    logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
+                except:
+                    continue
+
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
 logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
