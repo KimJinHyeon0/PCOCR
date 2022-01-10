@@ -1,5 +1,5 @@
-"""Unified interface to all dynamic graph model experiments"""
 
+"""Unified interface to all dynamic graph model experiments"""
 import os
 import logging
 import time
@@ -17,6 +17,7 @@ from collections import Counter
 from module import TGAN
 from graph import NeighborFinder
 from utils import EarlyStopMonitor
+
 
 class MEAN(torch.nn.Module):
     def __init__(self, input_dim, post_concat, NUM_FC, fc_dim, drop=0.3):
@@ -40,7 +41,7 @@ class MEAN(torch.nn.Module):
     def forward(self, x, k):
         if self.post_concat:
             k = k.astype(np.int64)
-            post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = n_feat[k].to(device)
             x = x.mean(dim=0)
             x = torch.cat((x, post_k), axis=0)
             x = self.dropout(x)
@@ -136,7 +137,7 @@ class LSTM(torch.nn.Module):
 
         if self.post_concat:
             k = k.astype(np.int64)
-            post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = n_feat[k].to(device)
             h_out = torch.unsqueeze(torch.cat((h_out[0], post_k), axis=0), 0)
 
         if self.NUM_FC == 2:
@@ -153,6 +154,7 @@ class LSTM(torch.nn.Module):
 random.seed(222)
 np.random.seed(222)
 torch.manual_seed(222)
+
 
 ### Argument and global variables
 parser = argparse.ArgumentParser('Interface for TGAT experiments on node classification')
@@ -203,6 +205,10 @@ NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 max_round = 5
 
+### Model initialize
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 #############################
 test_list = pd.read_csv('test_list.csv', index_col=0)
 
@@ -222,6 +228,7 @@ post_concat = bool(post_concat)
 hidden_dim = 128
 fc_dim = 32
 output_dim = 1
+
 if MODEL_NUM < 12:
     tgat_num = str(MODEL_NUM).zfill(3)
 else:
@@ -272,7 +279,14 @@ logger.info(args)
 ### Load data and train val test split
 g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
 e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
-n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+#n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+
+if EMBEDDING_METHOD == 'BERT':
+  n_feat = torch.from_numpy(np.load('./processed/{}_node_feat.npy'.format(DATA)))
+elif EMBEDDING_METHOD == 'SAGE_MEAN':
+  n_feat = torch.load('./processed/{}_n_feat_{}.pt'.format(DATA, EMBEDDING_METHOD))
+
+n_feat.to(device)
 
 train_time = 3888000
 test_time = np.quantile(g_df[g_df['g_ts'] > train_time].g_ts, 0.5)
@@ -322,7 +336,6 @@ MAX_SEQ = cntr.most_common(1)[0][1]
 
 if 0 < SEQ_SLICING:
     MAX_SEQ = round(np.quantile(list(cntr.values()), SEQ_SLICING))
-
 elif SEQ_SLICING < 0:
     MAX_SEQ = int(-SEQ_SLICING)
 
@@ -340,28 +353,27 @@ for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
     full_adj_list[dst].append((src, eidx, ts))
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
 
-### Model initialize
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 #device = torch.device('cuda:{}'.format(GPU))
-tgan = TGAN(train_ngh_finder, n_feat, e_feat,
-            num_layers=NUM_LAYER, use_time=USE_TIME, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
-            seq_len=SEQ_LEN, n_head=NUM_HEADS, drop_out=DROP_OUT, node_dim=NODE_DIM, time_dim=TIME_DIM)
-optimizer = torch.optim.Adam(tgan.parameters(), lr=LEARNING_RATE)
-criterion = torch.nn.BCELoss()
-tgan = tgan.to(device)
+#tgan = TGAN(train_ngh_finder, n_feat, e_feat,
+#            num_layers=NUM_LAYER, use_time=USE_TIME, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
+#            seq_len=SEQ_LEN, n_head=NUM_HEADS, drop_out=DROP_OUT, node_dim=NODE_DIM, time_dim=TIME_DIM)
+#optimizer = torch.optim.Adam(tgan.parameters(), lr=LEARNING_RATE)
+#criterion = torch.nn.BCELoss()
+#tgan = tgan.to(device)
 
 num_instance = len(train_src_l)
 logger.debug('num of training instances: {}'.format(num_instance))
 logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
 
-logger.info('loading saved TGAN model')
+# logger.info('loading saved TGAN model')
 #model_path = f'./saved_models/{MODEL_NUM}-TGAT.pth'
-model_path = f'./saved_models/{tgat_num}-TGAT.pth'
-tgan.load_state_dict(torch.load(model_path))
-tgan.eval()
-logger.info('TGAN models loaded : {}'.format(tgat_num))
+# model_path = f'./saved_models/{tgat_num}-TGAT.pth'
+# tgan.load_state_dict(torch.load(model_path))
+# tgan.eval()
+logger.info(f'{EMBEDDING_METHOD} LOADED')
+logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
 if PRED_METHOD == 'LSTM':
@@ -375,13 +387,12 @@ elif PRED_METHOD == 'MEAN':
 
 lr_model = lr_model.to(device)
 lr_optimizer = torch.optim.Adam(lr_model.parameters(), lr=args.lr)
-tgan.ngh_finder = full_ngh_finder
+# tgan.ngh_finder = full_ngh_finder
 lr_criterion = torch.nn.BCELoss()
 lr_criterion_eval = torch.nn.BCELoss()
 
 early_stopper = EarlyStopMonitor(max_round)
-
-def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_LAYER):
+def eval_epoch(src_l, ts_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
 
     graph_num = np.array([])
     raw_edge_len = np.array([])
@@ -394,7 +405,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
     with torch.no_grad():
         lr_model.eval()
-        tgan.eval()
+        #tgan.eval()
 
         for i, k in enumerate(set(g_num_l)):
 
@@ -403,7 +414,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
             valid_flag = (temp_ts_cut < time_cut)
 
-            src_l_cut = temp_src_cut[valid_flag]
+            src_l_cut = torch.cuda.LongTensor(temp_src_cut[valid_flag])
             ts_l_cut = temp_ts_cut[valid_flag]
 
             label = 1 if False in valid_flag else 0
@@ -411,7 +422,8 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
             if len(src_l_cut) < 2:
                 continue
 
-            src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, num_layer)
+            # src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, num_layer)
+            src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
             src_label = torch.cuda.FloatTensor([label])
 
             lr_prob = lr_model(src_embed, k).sigmoid()
@@ -478,7 +490,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
     return acc, auc_roc, AP, recall, F1, loss / num_instance
 
 for epoch in tqdm(range(args.n_epoch)):
-    tgan = tgan.eval()
+    #tgan = tgan.eval()
     lr_model = lr_model.train()
 
     if CLASS_BALANCING == 'BALANCED':
@@ -518,15 +530,16 @@ for epoch in tqdm(range(args.n_epoch)):
 
         valid_flag = (temp_ts_cut < time_cut)
 
-        src_l_cut = temp_src_cut[valid_flag]
+        src_l_cut = torch.cuda.LongTensor(temp_src_cut[valid_flag])
         ts_l_cut = temp_ts_cut[valid_flag]
 
         label = 1 if False in valid_flag else 0
 
         lr_optimizer.zero_grad()
-        with torch.no_grad():
-            src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, NODE_LAYER)
+        # with torch.no_grad():
+        #     src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, NODE_LAYER)
 
+        src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
         src_label = torch.cuda.FloatTensor([label])
 
         lr_prob = lr_model(src_embed, k).sigmoid()
@@ -534,8 +547,8 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_loss.backward()
         lr_optimizer.step()
 
-    train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
-    val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_ts_l, val_g_num_l, lr_model, tgan, 0)
+    train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, 0)
+    val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_ts_l, val_g_num_l, lr_model, 0)
     #torch.save(lr_model.state_dict(), './saved_models/edge_{}_wkiki_node_class.pth'.format(DATA))
     logger.info('epoch: {}:'.format(epoch))
     logger.info('train loss: {}, val loss: {}'.format(train_loss, val_loss))
@@ -560,6 +573,7 @@ for epoch in tqdm(range(args.n_epoch)):
         if early_stopper.is_best:
             torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
             logger.info('Saved {}-PREDICTED-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
+
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
@@ -568,6 +582,6 @@ for epoch in tqdm(range(args.n_epoch)):
                     continue
 
 
-test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
+test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, 1)
 logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
 torch.save(lr_model.state_dict(), MODEL_SAVE_PATH)

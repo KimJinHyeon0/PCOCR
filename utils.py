@@ -22,6 +22,7 @@ class EarlyStopMonitor(object):
 
         if self.last_best is None:
             self.last_best = curr_val
+            self.best_epoch = self.epoch_count
             self.is_best = True
 
         elif (curr_val - self.last_best) / np.abs(self.last_best) > self.tolerance:
