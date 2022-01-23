@@ -222,11 +222,12 @@ except:
 spec = test_list.loc[MODEL_NUM]
 
 DATA, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
-lstm_layer, NUM_FC, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:13]
+lstm_layer, NUM_FC, hidden_dim, fc_dim, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:]
 bidirectional = bool(bidirectional)
 post_concat = bool(post_concat)
-hidden_dim = 128
-fc_dim = 32
+hidden_dim = int(hidden_dim)
+fc_dim = int(fc_dim)
+
 output_dim = 1
 
 if MODEL_NUM < 12:
@@ -282,9 +283,9 @@ e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
 #n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
 if EMBEDDING_METHOD == 'BERT':
-  n_feat = torch.from_numpy(np.load('./processed/{}_node_feat.npy'.format(DATA)))
-elif EMBEDDING_METHOD == 'SAGE_MEAN':
-  n_feat = torch.load('./processed/{}_n_feat_{}.pt'.format(DATA, EMBEDDING_METHOD))
+    n_feat = torch.from_numpy(np.load('./processed/{}_node_feat.npy'.format(DATA))).to(device)
+elif EMBEDDING_METHOD == 'SAGE_MEAN' or EMBEDDING_METHOD == 'GAT':
+    n_feat = torch.load('./processed/{}_n_feat_{}.pt'.format(DATA, EMBEDDING_METHOD)).to(device)
 
 n_feat.to(device)
 
@@ -352,8 +353,6 @@ for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
     full_adj_list[src].append((dst, eidx, ts))
     full_adj_list[dst].append((src, eidx, ts))
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
-
-
 
 #device = torch.device('cuda:{}'.format(GPU))
 #tgan = TGAN(train_ngh_finder, n_feat, e_feat,
@@ -443,27 +442,28 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
     recall = recall_score(true_label, pred_label)
     F1 = f1_score(true_label, pred_label)
 
-
+    # save performance
     if data_type:
-        # save performance
         new = [{'SUBREDDIT': DATA,
-                'EMBEDDING_METHOD' : EMBEDDING_METHOD,
+                'EMBEDDING_METHOD': EMBEDDING_METHOD,
                 'TGAT_TIME_CUT': tgat_time_cut,
-                'PRED_TIME_CUT' : time_cut,
+                'PRED_TIME_CUT': time_cut,
                 'PRED_METHOD': PRED_METHOD,
-                'SAMPLING_METHOD' : sampling_method,
-                'POST_CONCAT' : post_concat,
-                'BIDIRECTIONAL' : bidirectional,
-                'NUM_LAYER' : lstm_layer,
-                'NUM_FC' : NUM_FC,
-                'MAX_SEQ_QUANTILE' : SEQ_SLICING,
+                'SAMPLING_METHOD': sampling_method,
+                'POST_CONCAT': post_concat,
+                'BIDIRECTIONAL': bidirectional,
+                'NUM_LAYER': lstm_layer,
+                'NUM_FC': NUM_FC,
+                'FC_DIM': fc_dim,
+                'HIDDEN_DIM': hidden_dim,
+                'MAX_SEQ_QUANTILE': SEQ_SLICING,
                 'TRAINING_METHOD': TRAINING_METHOD,
-                'CLASS_BALANCING' : CLASS_BALANCING,
+                'CLASS_BALANCING': CLASS_BALANCING,
                 'NUM_GRAPH': len(graph_num),
                 'RAW_EDGE_NUM': sum(raw_edge_len),
                 'USED_EDGE_NUM': sum(sliced_edge_len),
-                'LABEL_RATIO' : label_ratio,
-                'ACCURACY' : acc,
+                'LABEL_RATIO': label_ratio,
+                'ACCURACY': acc,
                 'AUC_ROC_SCORE': auc_roc,
                 'AP_SCORE': AP,
                 'RECALL_SCORE': recall,
@@ -478,12 +478,12 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
             new_model.to_csv(MODEL_PERFORMANCE_PATH)
 
         #save model details
-        df = pd.DataFrame({'g_num' : graph_num,
-                           'raw_edge_num' : raw_edge_len,
-                           'sliced_edge_num' : sliced_edge_len,
-                           'true_label' : true_label,
-                           'pred_prob' : pred_prob,
-                           'pred_label' : pred_label})
+        df = pd.DataFrame({'g_num': graph_num,
+                           'raw_edge_num': raw_edge_len,
+                           'sliced_edge_num': sliced_edge_len,
+                           'true_label': true_label,
+                           'pred_prob': pred_prob,
+                           'pred_label': pred_label})
 
         df.to_csv('./saved_data/{}.csv'.format(MODEL_NUM))
 
@@ -497,6 +497,7 @@ for epoch in tqdm(range(args.n_epoch)):
         neg_k = np.array([])
         pos_k = np.array([])
 
+        #class balancing
         for k in set(train_g_num_l):
             temp_src_cut = train_src_l[train_g_num_l == k]
             temp_ts_cut = train_ts_l[train_g_num_l == k]
@@ -512,6 +513,7 @@ for epoch in tqdm(range(args.n_epoch)):
             else:
                 neg_k = np.append(neg_k, k)
 
+        #random choice
         if len(pos_k) > len(neg_k):
             pos_k = np.random.choice(pos_k, len(neg_k))
         else:
@@ -557,7 +559,6 @@ for epoch in tqdm(range(args.n_epoch)):
     logger.info('train ap: {}, val ap: {}'.format(train_AP, val_AP))
     logger.info('train f1: {}, val f1: {}'.format(train_F1, val_F1))
 
-
     if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
         best_epoch = early_stopper.best_epoch
@@ -573,14 +574,12 @@ for epoch in tqdm(range(args.n_epoch)):
         if early_stopper.is_best:
             torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
             logger.info('Saved {}-PREDICTED-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
-
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
                     logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
                 except:
                     continue
-
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, 1)
 logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
