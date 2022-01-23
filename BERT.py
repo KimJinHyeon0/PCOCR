@@ -39,8 +39,8 @@ subredditList = ['news', 'iama', 'showerthoughts']
 
 for subreddit in subredditList:
     print('\nExtracting Embedding | subreddit : {}\n'.format(subreddit))
-    OUT_EDGE_FEAT = './processed/{}_edge_feat_2.npy'.format(subreddit)
-    OUT_NODE_FEAT = './processed/{}_node_feat_2.npy'.format(subreddit)
+    OUT_EDGE_FEAT = './processed/{}_edge_feat.npy'.format(subreddit)
+    OUT_NODE_FEAT = './processed/{}_node_feat.npy'.format(subreddit)
     output = embeddingExtract(subreddit).cpu()
 
     np.save(OUT_NODE_FEAT, output)
