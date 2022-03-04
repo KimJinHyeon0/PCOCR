@@ -72,8 +72,6 @@ def makeDict(subreddit):
 
 def makeSeq(subreddit):
 
-    idx = 0
-
     for post_key in list(key_sequence_dict.keys()):
         sequence = key_sequence_dict[post_key]
 
@@ -97,9 +95,8 @@ def makeSeq(subreddit):
 
             link_id = int(post_dict[link_key][0])
             link_ts = int(id_sequence_dict[link_id][0])
-            idx += 1
 
-            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts, idx)]
+            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts, comment_id)]
 
 
 def makeDf(subreddit):
@@ -150,21 +147,16 @@ def save(df, subreddit):
     df.to_csv(OUT_CSV_train)
     print('\nSaved {}_structure.csv'.format(subreddit))
 
-    # with open(OUT_SENTENCE_DICT, 'wb') as f:
-    #     pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
-    # print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
+    with open(OUT_SENTENCE_DICT, 'wb') as f:
+        pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
+    print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
 
-    with open(OUT_SEQUENCE_DICT, 'wb') as f:
-        pickle.dump(id_sequence_dict, f, pickle.HIGHEST_PROTOCOL)
-    print('\nSaved {}_sequence_dict.pickle'.format(subreddit))
-
-subredditlist = ['news', 'iama', 'showerthoughts']
+subredditlist = ['iama', 'showerthoughts']
 for subreddit in subredditlist:
     print('\nProcessing subreddit - {}...\n'.format(subreddit))
 
     OUT_CSV_train = './processed/{}_structure.csv'.format(subreddit)
     OUT_SENTENCE_DICT = './data/{}_sentence_dict.pickle'.format(subreddit)
-    OUT_SEQUENCE_DICT = './processed/{}_seq_dict.pickle'.format(subreddit)
 
     makeDict(subreddit)
     makeSeq(subreddit)
