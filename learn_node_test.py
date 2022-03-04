@@ -112,7 +112,7 @@ class LSTM(torch.nn.Module):
                 embedded = emb[:self.seq_len, :]
 
             elif sampling_method == 'RANDOM':
-                sampled_idx = np.sort(np.random.choice(len(emb), self.seq_len, replace=True))
+                sampled_idx = np.sort(np.random.choice(len(emb), self.seq_len, replace=False))
                 embedded = torch.vstack([emb[sampled_idx]])
 
         else:
@@ -203,6 +203,9 @@ NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 max_round = 5
 
+### Model initialize
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 #############################
 test_list = pd.read_csv('test_list.csv', index_col=0)
 
@@ -216,7 +219,7 @@ except:
 spec = test_list.loc[MODEL_NUM]
 
 DATA, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
-lstm_layer, NUM_FC, hidden_dim, fc_dim, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:]
+lstm_layer, NUM_FC, fc_dim, hidden_dim, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:]
 bidirectional = bool(bidirectional)
 post_concat = bool(post_concat)
 hidden_dim = int(hidden_dim)
@@ -225,19 +228,16 @@ fc_dim = int(fc_dim)
 output_dim = 1
 
 #select pre-trained model
-if MODEL_NUM < 12:
-    tgat_num = str(MODEL_NUM).zfill(3)
-else:
-    if DATA == 'iama':
-        if TRAINING_METHOD == 'SELECTIVE':
-            tgat_num = '001'
-        elif TRAINING_METHOD == 'FULL':
-            tgat_num = '004'
-    elif DATA == 'showerthoughts':
-        if TRAINING_METHOD == 'SELECTIVE':
-            tgat_num = '006'
-        elif TRAINING_METHOD == 'FULL':
-            tgat_num = '009'
+if DATA == 'iama':
+    if TRAINING_METHOD == 'SELECTIVE':
+        tgat_num = '000'
+    elif TRAINING_METHOD == 'FULL':
+        tgat_num = '001'
+elif DATA == 'showerthoughts':
+    if TRAINING_METHOD == 'SELECTIVE':
+        tgat_num = '002'
+    elif TRAINING_METHOD == 'FULL':
+         tgat_num = '003'
 
 if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
     SEQ_SLICING = 0
@@ -250,7 +250,7 @@ MODEL_NUM = str(MODEL_NUM).zfill(3)
 
 print('MODEL_NUM :', MODEL_NUM)
 print('tgat_num :', tgat_num)
-print(spec[:13])
+print(spec[:])
 ############################
 
 MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
@@ -319,13 +319,11 @@ val_ts_l = ts_l[val_flag]
 val_label_l = label_l[val_flag]
 val_e_idx_l = e_idx_l[val_flag]
 
-temp = g_df[ts_l < time_cut].g_num.values
-cntr = Counter(temp)
+cntr = Counter(g_num)
 MAX_SEQ = cntr.most_common(1)[0][1]
 
 if 0 < SEQ_SLICING:
     MAX_SEQ = round(np.quantile(list(cntr.values()), SEQ_SLICING))
-
 elif SEQ_SLICING < 0:
     MAX_SEQ = int(-SEQ_SLICING)
 
@@ -342,10 +340,6 @@ for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
     full_adj_list[src].append((dst, eidx, ts))
     full_adj_list[dst].append((src, eidx, ts))
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
-
-### Model initialize
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #device = torch.device('cuda:{}'.format(GPU))
 tgan = TGAN(train_ngh_finder, n_feat, e_feat,
