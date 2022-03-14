@@ -65,7 +65,7 @@ TIME_DIM = args.time_dim
 
 TRAINING_METHOD = 'FULL'
 time_cut = 324000
-max_round = 5
+max_round = 10
 
 MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
 try:
@@ -98,16 +98,15 @@ def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
     val_acc, val_ap, val_f1, val_auc = [], [], [], []
     with torch.no_grad():
         tgan = tgan.eval()
-        TEST_BATCH_SIZE = 100
         num_test_instance = len(src)
-        num_test_batch = math.ceil(num_test_instance / TEST_BATCH_SIZE)
+        num_test_batch = math.ceil(num_test_instance / BATCH_SIZE)
 
         for k in range(num_test_batch):
             # percent = 100 * k / num_test_batch
             # if k % int(0.2 * num_test_batch) == 0:
             #     logger.info('{0} progress: {1:10.4f}'.format(hint, percent))
-            s_idx = k * TEST_BATCH_SIZE
-            e_idx = min(num_test_instance - 1, s_idx + TEST_BATCH_SIZE)
+            s_idx = k * BATCH_SIZE
+            e_idx = min(num_test_instance - 1, s_idx + BATCH_SIZE)
             src_l_cut = src[s_idx:e_idx]
             dst_l_cut = dst[s_idx:e_idx]
             ts_l_cut = ts[s_idx:e_idx]
@@ -184,9 +183,6 @@ if TRAINING_METHOD == 'SELECTIVE':
 
     for k in set(train_g_num):
         temp_flag = (train_g_num == k)
-
-        if sum(temp_flag) < 2:
-            continue
 
         temp_index = train_index_l[temp_flag]
         temp_label = train_label_l[temp_flag]
