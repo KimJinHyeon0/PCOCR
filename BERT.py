@@ -38,7 +38,7 @@ def text_cleaning(text):
                                u"\U00002702-\U000027B0"
                                u"\U000024C2-\U0001F251"
                                "]+", flags=re.UNICODE)
-    text = emoji_pattern.sub(r'', text)
+    #text = emoji_pattern.sub(r'', text)
 
     text = re.sub(r"[^a-zA-Z\d]", " ", text)  # Remove special Charecters
     text = re.sub(' +', ' ', text)  # Remove Extra Spaces
@@ -48,7 +48,7 @@ def text_cleaning(text):
 
 
 def embeddingExtract(subreddit):
-    sentence_df = pd.read_csv(SENTENCE_DF_PATH)
+    sentence_df = pd.read_csv(SENTENCE_DF_PATH, index_col=0)
     max_idx = sentence_df.index.max()
 
     print('Total Idx = ', max_idx)
