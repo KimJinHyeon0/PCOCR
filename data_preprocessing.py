@@ -1,30 +1,23 @@
-import pickle
-from collections import defaultdict
 import pandas as pd
+import numpy as np
 
-post_dict = defaultdict()
-comment_dict = defaultdict()
+subredditlist = ['iama', 'showerthoughts']
+for subreddit in subredditlist:
+    print('\nProcessing subreddit - {}...\n'.format(subreddit))
 
-key_sequence_dict = defaultdict()
-id_sequence_dict = defaultdict()
-
-sentence_dict = defaultdict()
-
-def makeDict(subreddit):
     POSTPATH = './data/{}_posts.csv'.format(subreddit)
     COMMENTPATH = './data/{}_comments.csv'.format(subreddit)
+    OUT_STRUCTURE_PATH = './processed/{}_structure.csv'.format(subreddit)
+    OUT_SENTENCE_PATH = './data/{}_sentence.csv'.format(subreddit)
 
-    post_dict.clear()
-    comment_dict.clear()
-
-    key_sequence_dict.clear()
-    id_sequence_dict.clear()
-
-    sentence_dict.clear()
-
-    #post_dict
     with open(POSTPATH, 'r', encoding='utf-8') as f:
         post_train = f.read().rstrip("\n;\n").split("\n;\n")
+
+    total_key_set = []
+    total_sentence_dict = {}
+    node_map = {}
+
+    g_list, g_ts_list, u_list, i_list, ts_list = [], [], [], [], []
 
     for i in range(len(post_train)):
         data = post_train[i].split('\t;\t')
@@ -32,18 +25,15 @@ def makeDict(subreddit):
         post_key = data[1]
         title = data[4]
         selftext = data[7]
-        created_utc = data[8]
-        post_dict[post_key] = data
-        key_sequence_dict.update({post_key:[]})
-        id_sequence_dict.update({post_id:[(created_utc)]})
-
+        created_utc = int(data[8])
         body = title + ' ' + selftext
-        sentence_dict.update({post_id:body})
 
-    #comment_dict
+        node_map[post_key] = (post_id, created_utc)
+        total_key_set.append(post_key)
+        total_sentence_dict[post_id] = body
+
     with open(COMMENTPATH, 'r', encoding='utf-8') as f:
         comment = f.read().rstrip("\n;\n").split("\n;\n")
-
     for i in range(len(comment)):
         data = comment[i].split('\t;\t')
         comment_id = int(data[0])
@@ -51,118 +41,77 @@ def makeDict(subreddit):
         link_key = data[4]
         parent_key = data[5]
         body = data[6]
+        time_stamp = int(data[7])
 
-        comment_dict[comment_key] = data
+        if link_key in node_map:
+            node_map[comment_key] = (comment_id, time_stamp)
+            total_key_set.append(comment_key)
+            total_sentence_dict[comment_id] = body
 
-        if subreddit == 'news':
-            time_stamp = int(data[8])
-        else:
-            time_stamp = int(data[7])
-
-        if time_stamp < 0:
-            continue
-    #key_sequence_dict
-        if link_key in key_sequence_dict:
-            key_sequence_dict[link_key] += [(comment_key, parent_key, time_stamp)]
-            sentence_dict.update({comment_id: body})
-
-    #sort key_sequence_dict by time_stamp
-    for i in list(key_sequence_dict.keys()):
-        key_sequence_dict[i].sort(key=lambda x: (x[2]))
-
-def makeSeq(subreddit):
-
-    for post_key in list(key_sequence_dict.keys()):
-        sequence = key_sequence_dict[post_key]
-
-        for j in range(len(sequence)):
-            comment_key = sequence[j][0]
-            parent_key = sequence[j][1]
-            time_stamp = int(sequence[j][2])
-
-            comment_id = int(comment_dict[comment_key][0])
-
-            link_key = comment_dict[comment_key][4]
-
-            if parent_key in post_dict:
-                parent_id = int(post_dict[parent_key][0])
-
-            elif parent_key in comment_dict:
-                parent_id = int(comment_dict[parent_key][0])
-
-            else:
-                continue
-
-            link_id = int(post_dict[link_key][0])
-            link_ts = int(id_sequence_dict[link_id][0])
-
-            id_sequence_dict[link_id] += [(comment_id, parent_id, time_stamp - link_ts, comment_id)]
+            g_list.append(link_key)
+            g_ts_list.append(node_map[link_key][1])
+            u_list.append(comment_key)
+            i_list.append(parent_key)
+            ts_list.append(time_stamp - node_map[link_key][1])
 
 
-def makeDf(subreddit):
-    g_list, g_ts_list, u_list, i_list, ts_list, label_list, idx_list = [], [], [], [], [], [], []
 
-    for key in id_sequence_dict:
-        g_num = key
-
-        seq = id_sequence_dict[key]
-        g_ts = seq[0]
-
-        temp = []
-
-        for comment in seq[1:]:
-            u, i, ts, idx = comment[:]
-
-            g_list.append(g_num)
-            g_ts_list.append(g_ts)
-            u_list.append(u)
-            i_list.append(i)
-            ts_list.append(ts)
-            idx_list.append(idx)
-
-            temp.append(i)
-
-        for comment in seq[1:]:
-            src = comment[0]
-
-            if src in set(temp):
-                label = 1
-            else:
-                label = 0
-
-            label_list.append(label)
-
+    assert len(total_key_set) == len(set(total_key_set))
+    sentence_df = pd.DataFrame.from_dict(total_sentence_dict, columns=['raw_text'], orient='index')
     df = pd.DataFrame({'g_num' : g_list,
                        'g_ts' : g_ts_list,
                        'u': u_list,
                        'i': i_list,
-                       'ts': ts_list,
-                       'label': label_list,
-                       'idx': idx_list})
-    return df
+                       'ts': ts_list})
 
+    #Remove nodes disconnected from posts
+    print('Removing nodes disconnected from posts...')
+    temp = 0
+    rn = 0
+    while temp != len(node_map):
+        temp = len(node_map)
+        useless_nodes, useless_indices = np.array([]), np.array([])
+        idx_l = df.index.values
+        src_l = df.u.values
+        dst_l = df.i.values
 
-def save(df, subreddit):
+        for k in set(dst_l):
+            if k not in node_map:
+                non_flag = dst_l == k
+                useless_nodes = np.append(useless_nodes, src_l[non_flag])
+                useless_indices = np.append(useless_indices, idx_l[non_flag])
 
-    df.to_csv(OUT_CSV_train)
+        assert len(useless_nodes) == len(useless_indices)
+        rn += len(useless_nodes)
+
+        for i in useless_nodes:
+            del node_map[i]
+
+        df = df.drop(useless_indices)
+    print(f'Removed {rn} useless nodes')
+
+    #Remove graphs where #nodes is under 2
+    print('Removing graphs where #nodes is under 2...')
+    g_num = df.g_num.values
+    before_filt = len(g_num)
+    isin_filter = df['g_num'].isin(df['g_num'].value_counts()[df['g_num'].value_counts() > 1].index)
+
+    df = df[isin_filter]
+    after_filt = len(df)
+    print(f'Removed {before_filt-after_filt} useless graphs')
+
+    df['g_num'] = df.g_num.apply(lambda x: node_map[x][0])
+    df['u'] = df.u.apply(lambda x: node_map[x][0])
+    df['i'] = df.i.apply(lambda x: node_map[x][0])
+    dst_l = df.i.values
+    df['label'] = df.u.apply(lambda x: 1 if x in dst_l else 0)
+    df['idx'] = df['u']
+
+    df.to_csv(OUT_STRUCTURE_PATH)
     print('\nSaved {}_structure.csv'.format(subreddit))
-
-    with open(OUT_SENTENCE_DICT, 'wb') as f:
-        pickle.dump(sentence_dict, f, pickle.HIGHEST_PROTOCOL)
-    print('\nSaved {}_sentence_dict.pickle'.format(subreddit))
-
-subredditlist = ['iama', 'showerthoughts']
-for subreddit in subredditlist:
-    print('\nProcessing subreddit - {}...\n'.format(subreddit))
-
-    OUT_CSV_train = './processed/{}_structure.csv'.format(subreddit)
-    OUT_SENTENCE_DICT = './data/{}_sentence_dict.pickle'.format(subreddit)
-
-    makeDict(subreddit)
-    makeSeq(subreddit)
-    df = makeDf(subreddit)
-
-    save(df, subreddit)
-    print('-' * 50)
+    total_node_set = np.sort(np.unique(np.hstack((df.g_num.values, df.u.values, df.i.values))))
+    sentence_df = sentence_df.loc[total_node_set]
+    sentence_df.to_csv(OUT_SENTENCE_PATH)
+    print('\nSaved {}_sentence.csv'.format(subreddit))
 
 print('\nDone')
