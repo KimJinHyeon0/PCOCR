@@ -201,7 +201,7 @@ LEARNING_RATE = args.lr
 NODE_LAYER = 1
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
-max_round = 5
+max_round = 10
 
 ### Model initialize
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -240,8 +240,6 @@ elif DATA == 'showerthoughts':
          tgat_num = '003'
 
 if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
-    SEQ_SLICING = 0
-    output_dim = None
     n_layer = None
     bidirectional = False
     sampling_method = None
@@ -277,10 +275,6 @@ g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
 e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
 n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
-train_time = 3888000
-test_time = np.quantile(g_df[g_df['g_ts'] > train_time].g_ts, 0.5)
-
-
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
 src_l = g_df.u.values
@@ -288,6 +282,9 @@ dst_l = g_df.i.values
 e_idx_l = g_df.idx.values
 label_l = g_df.label.values
 ts_l = g_df.ts.values
+
+train_time = 3888000
+test_time = np.quantile(np.unique(g_ts[(g_ts > train_time)]), 0.5)
 
 max_src_index = src_l.max()
 max_idx = max(src_l.max(), dst_l.max())
@@ -405,10 +402,6 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
             label = 1 if False in valid_flag else 0
 
-            #ignore non-comment posts
-            if len(src_l_cut) < 2:
-                continue
-
             src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, num_layer)
             src_label = torch.cuda.FloatTensor([label])
 
@@ -491,9 +484,6 @@ for epoch in tqdm(range(args.n_epoch)):
 
             valid_flag = (temp_ts_cut < time_cut)
             src_l_cut = temp_src_cut[valid_flag]
-
-            if len(src_l_cut) < 2:
-                continue
 
             if False in valid_flag:
                 pos_k = np.append(pos_k, k)
