@@ -1,8 +1,7 @@
 import torch
-import pickle5
 from transformers import BertTokenizer, BertModel
-import time
 import numpy as np
+import pandas as pd
 import re
 from bs4 import BeautifulSoup
 
@@ -49,34 +48,31 @@ def text_cleaning(text):
 
 
 def embeddingExtract(subreddit):
-    with open('./data/{}_sentence_dict.pickle'.format(subreddit), 'rb') as f:
-        sentence_dict = pickle5.load(f)
-
-    dict_l = list(sentence_dict.keys())
-    max_idx = max(dict_l)
+    sentence_df = pd.read_csv(SENTENCE_DF_PATH)
+    max_idx = sentence_df.index.max()
 
     print('Total Idx = ', max_idx)
     feature = torch.zeros((max_idx + 1, 768), device='cpu')
 
-    for key in sentence_dict:
-        if int(key) % 1000 == 0:
-            print('{} | {}/{}'.format(subreddit, key, max_idx))
-        raw_text = sentence_dict[key]
+    for index, row in sentence_df.iterrows():
+        raw_text = str(row['raw_text'])
+        if int(index) % 1000 == 0:
+            print('{} | {}/{}'.format(subreddit, index, max_idx))
         cleaned_text = text_cleaning(raw_text)
         inputs = tokenizer(cleaned_text, return_tensors="pt", truncation=True).to(cuda)
         with torch.no_grad():
             outputs = model(**inputs)
         last_hidden_states = outputs.last_hidden_state
         embedding = torch.squeeze(torch.mean(last_hidden_states, dim=1))
-        feature[key] = embedding
+        feature[index] = embedding
 
     return feature
 
 
-subredditList = ['news', 'iama', 'showerthoughts']
 
-for subreddit in subredditList:
+for subreddit in ['iama', 'showerthoughts']:
     print('\nExtracting Embedding | subreddit : {}\n'.format(subreddit))
+    SENTENCE_DF_PATH = './data/{}_sentence.csv'.format(subreddit)
     OUT_EDGE_FEAT = './processed/{}_edge_feat.npy'.format(subreddit)
     OUT_NODE_FEAT = './processed/{}_node_feat.npy'.format(subreddit)
     output = embeddingExtract(subreddit).cpu()
