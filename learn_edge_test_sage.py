@@ -5,7 +5,6 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import pandas as pd
 import numpy as np
-import time
 import os
 import random
 from sklearn.metrics import f1_score, roc_auc_score
@@ -132,12 +131,13 @@ class SupervisedGraphSage(nn.Module):
         super(SupervisedGraphSage, self).__init__()
         self.enc = enc
         self.xent = nn.CrossEntropyLoss()
-
+        self.embeds = 0
         self.weight = nn.Parameter(torch.cuda.FloatTensor(num_classes, enc.embed_dim))
         init.xavier_uniform_(self.weight)
 
     def forward(self, nodes):
         embeds = self.enc(nodes)
+        self.embeds = embeds.t()
         scores = self.weight.mm(embeds)
 
         return scores.t()
@@ -152,27 +152,47 @@ def load_data(DATA, time_cut, train_time, TRAINING_METHOD):
     print('Loading Data')
     g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
     n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+
+    g_num = g_df.g_num.values
     g_ts = g_df.g_ts.values
+    src_l = g_df.u.values
+    dst_l = g_df.i.values
     ts_l = g_df.ts.values
+    label_l = g_df.label.values
+
+    test_time = np.quantile(g_ts[(g_ts > train_time)], 0.5)
+
+    train_flag = (g_ts < train_time)
+    test_flag = (g_ts >= train_time) & (g_ts < test_time)
+    valid_flag = (g_ts >= test_time)
+
+    train_g_num = g_num[train_flag]
+    train_src_l = src_l[train_flag]
+    train_dst_l = dst_l[train_flag]
+    train_ts_l = ts_l[train_flag]
+    train_label_l = label_l[train_flag]
+
+    val_src_l = src_l[valid_flag]
+    val_dst_l = dst_l[valid_flag]
+    val_label_l = label_l[valid_flag]
+
+    test_src_l = src_l[test_flag]
+    test_dst_l = dst_l[test_flag]
+    test_label_l = label_l[test_flag]
 
     if TRAINING_METHOD == 'SELECTIVE':
-        train_flag = (g_ts < train_time)
-        time_cut_flag = (ts_l < time_cut)
+        time_cut_flag = (train_ts_l < time_cut)
 
-        train_df = g_df[train_flag & time_cut_flag]
-        temp_df = g_df[~train_flag]
+        train_g_num = train_g_num[time_cut_flag]
+        train_src_l = train_src_l[time_cut_flag]
+        train_dst_l = train_dst_l[time_cut_flag]
+        train_label_l = train_label_l[time_cut_flag]
 
-        train_g_num = train_df.g_num.values
-        train_label_l = train_df.label.values
-        train_index_l = np.arange(len(train_df))
-
-        selective_flag = np.zeros((len(train_df)), dtype=bool)
+        train_index_l = np.arange(len(train_g_num))
+        selective_flag = np.zeros((len(train_g_num)), dtype=bool)
 
         for k in set(train_g_num):
             temp_flag = (train_g_num == k)
-
-            if sum(temp_flag) < 2:
-                continue
 
             temp_index = train_index_l[temp_flag]
             temp_label = train_label_l[temp_flag]
@@ -187,93 +207,56 @@ def load_data(DATA, time_cut, train_time, TRAINING_METHOD):
             selective_flag[balanced] = True
             selective_flag[minor] = True
 
-        train_df = train_df[selective_flag]
-        g_df = pd.concat([train_df, temp_df])
+        train_src_l = train_src_l[selective_flag]
+        train_dst_l = train_dst_l[selective_flag]
+        train_label_l = train_label_l[selective_flag]
 
-    g_num = g_df.g_num.values
-    g_ts = g_df.g_ts.values
-    src = g_df.u.values
-    dst = g_df.i.values
-    label_l = g_df.label.values
-
-    test_time = np.quantile(g_ts[(g_ts > train_time)], 0.5)
-    train_flag = (g_ts < train_time)
-    test_flag = (g_ts >= train_time) & (g_ts < test_time)
-    val_flag = (g_ts >= test_time)
-
-    total_node_set = np.sort(np.unique(np.concatenate((src, dst))))
-    train_node_set = np.unique(np.concatenate((src[train_flag], dst[train_flag])))
-    test_node_set = np.unique(np.concatenate((src[test_flag], dst[test_flag])))
-    val_node_set = np.unique(np.concatenate((src[val_flag], dst[val_flag])))
-
-    test_idx = np.random.choice(total_node_set, 1)[0]
-    before_feat = n_feat[test_idx]
-
-    feat_data = n_feat[total_node_set]
-
-    assert feat_data.shape[0] == total_node_set.shape[0]
-    assert len(total_node_set) == len(train_node_set) + len(test_node_set) + len(val_node_set)
-
-    labels = np.empty((total_node_set.shape[0], 1), dtype=np.int64)
-    node_map = {}
-
-    for i, node in enumerate(total_node_set):
-        node_map[node] = i
-        if node in g_num:
-            labels[i] = 1
-        elif node in src:
-            labels[i] = label_l[(g_df.idx.values == node)]
-        else:
-            labels[i] = 0
+    total_src_l = np.hstack((train_src_l, test_src_l, val_src_l))
+    total_dst_l = np.hstack((train_dst_l, test_dst_l, val_dst_l))
 
     adj_lists = defaultdict(set)
-    for s, d in zip(src, dst):
-        n_1 = node_map[s]
-        n_2 = node_map[d]
-        adj_lists[n_1].add(n_2)
-        adj_lists[n_2].add(n_1)
+    for src, dst in zip(total_src_l, total_dst_l):
+        adj_lists[src].add(dst)
+        adj_lists[dst].add(src)
 
-    test_2_idx = node_map[test_idx]
-    after_feat = feat_data[test_2_idx]
+    return n_feat, adj_lists, train_src_l, train_label_l, test_src_l, test_label_l, val_src_l, val_label_l
 
-    train = np.array(list(map(lambda x: node_map[x], train_node_set)))
-    test = np.array(list(map(lambda x: node_map[x], test_node_set)))
-    val = np.array(list(map(lambda x: node_map[x], val_node_set)))
+def random_shuffle(num_instance, src, label):
+    indices = np.arange(num_instance)
+    np.random.shuffle(indices)
+    return src[indices], label[indices]
 
-    assert np.array_equal(before_feat, after_feat)
-    assert feat_data.shape[0] == len(total_node_set)
-    assert np.array_equal(np.sort(np.hstack((train, test, val))), np.array(list(map(lambda x: node_map[x], total_node_set))))
-
-    return feat_data, labels, adj_lists, train, test, val, node_map, g_df
-
-def eval_one_epoch(graphsage, data, labels):
-    val_acc, val_ap, val_f1, val_auc = [], [], [], []
+def eval_one_epoch(graphsage, src_l, label_l):
+    acc, ap, f1, auc = [], [], [], []
     with torch.no_grad():
         graphsage = graphsage.eval()
-        num_instance = len(data)
+        num_instance = len(src_l)
         num_batch = math.ceil(num_instance / BATCH_SIZE)
-
+        #random shuffle
+        src_l, label_l = random_shuffle(num_instance, src_l, label_l)
         for k in range(num_batch):
             s_idx = k * BATCH_SIZE
             e_idx = min(num_instance - 1, s_idx + BATCH_SIZE)
-            batch_nodes = data[s_idx:e_idx]
-            batch_labels = labels[batch_nodes]
+            src_l_cut = src_l[s_idx:e_idx]
+            label_l_cut = label_l[s_idx:e_idx]
 
-            batch_output = graphsage.forward(batch_nodes)
-            pred_score = batch_output.data.cpu().numpy()
+            output = graphsage.forward(src_l_cut).data.cpu()
+            pred_prob = output[np.arange(src_l_cut.shape[0]), label_l_cut.astype(np.int).squeeze()]
+            pred_label = output.argmax(axis=1)
+            auc.append(roc_auc_score(label_l_cut, pred_prob))
+            f1.append(f1_score(label_l_cut, pred_label))
 
-            val_auc.append(roc_auc_score(batch_labels, pred_score[np.arange(batch_labels.shape[0]), batch_labels.astype(np.int).squeeze()]))
-            val_f1.append(f1_score(batch_labels, pred_score.argmax(axis=1), average="micro"))
+    return np.mean(auc), np.mean(f1)
 
-    return np.mean(val_auc), np.mean(val_f1)
-
-
+np.random.seed(222)
+random.seed(222)
 def run():
     NUM_EPOCH = 1000
     max_round = 10
-    np.random.seed(1)
-    random.seed(1)
-    feat_data, labels, adj_lists, train, test, val, node_map, g_df = load_data(DATA, time_cut, train_time, TRAINING_METHOD)
+    feat_data, adj_lists, \
+    train_src_l, train_label_l, \
+    test_src_l, test_label_l, \
+    val_src_l, val_label_l = load_data(DATA, time_cut, train_time, TRAINING_METHOD)
     print('Data Loaded')
     features = nn.Embedding(feat_data.shape[0], feat_data.shape[1])
     features.weight = nn.Parameter(torch.FloatTensor(feat_data), requires_grad=False)
@@ -290,35 +273,39 @@ def run():
     graphsage = SupervisedGraphSage(2, enc2)
     graphsage.to(device)
     early_stopper = EarlyStopMonitor(max_round)
+    criterion = torch.nn.BCELoss()
 
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=0.0001)
-    times = []
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=0.0005)
 
-    num_instance = len(train)
+    num_instance = len(train_src_l)
     print('num_instance :', num_instance)
     num_batch = math.ceil(num_instance / BATCH_SIZE)
 
     for epoch in range(NUM_EPOCH):
-        np.random.shuffle(train)
+        m_loss = []
+        #random shuffle
+        train_src_l, train_label_l = random_shuffle(num_instance, train_src_l, train_label_l)
         print('Start {} epoch'.format(epoch))
         for k in range(num_batch):
             s_idx = k * BATCH_SIZE
             e_idx = min(num_instance - 1, s_idx + BATCH_SIZE)
-            batch_nodes = train[s_idx:e_idx]
-            start_time = time.time()
+            src_l_cut = train_src_l[s_idx:e_idx]
+            label_l_cut = train_label_l[s_idx:e_idx]
+
             optimizer.zero_grad()
-            loss = graphsage.loss(batch_nodes,
-                                  Variable(torch.cuda.LongTensor(labels[batch_nodes])))
+            graphsage.forward(src_l_cut)
+
+            output = graphsage.forward(src_l_cut).sigmoid().data.cpu()
+            pred_prob = output[np.arange(src_l_cut.shape[0]), label_l_cut.astype(np.int).squeeze()]
+            loss = criterion(pred_prob, torch.from_numpy(label_l_cut).float())
+            m_loss.append(loss.item())
+            loss.requires_grad_(True)
             loss.backward()
             optimizer.step()
-            end_time = time.time()
-            times.append(end_time - start_time)
-            # print(batch_nodes, batch_nodes.shape)
-
-        val_auc, val_f1 = eval_one_epoch(graphsage, val, labels)
+        print(f'Epoch mean Loss : {np.mean(m_loss)}')
+        val_auc, val_f1 = eval_one_epoch(graphsage, val_src_l, val_label_l)
         print("Validation AUC:", val_auc)
         print("Validation F1:", val_f1)
-        print("Average batch time:", np.mean(times))
 
         if early_stopper.early_stop_check(val_auc):
             print('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
@@ -342,7 +329,7 @@ def run():
                     except:
                         continue
 
-    test_f1, test_auc = eval_one_epoch(graphsage, test, labels)
+    test_auc, test_f1 = eval_one_epoch(graphsage, test_src_l, test_label_l)
     print("TEST AUC:", test_auc)
     print("TEST F1:", test_f1)
     print('Saving SAGE_MEAN model')
