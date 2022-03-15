@@ -93,13 +93,19 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 logger.info(args)
 
+def random_shuffle(num_instances, src, dst, ts, label):
+    indices = np.arange(num_instances)
+    np.random.shuffle(indices)
+    return src[indices], dst[indices], ts[indices], label[indices]
 
 def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
-    val_acc, val_ap, val_f1, val_auc = [], [], [], []
+    acc, ap, f1, auc = [], [], [], []
     with torch.no_grad():
         tgan = tgan.eval()
         num_test_instance = len(src)
         num_test_batch = math.ceil(num_test_instance / BATCH_SIZE)
+
+        src, dst, ts, label = random_shuffle(num_test_instance, src, dst, ts, label)
 
         for k in range(num_test_batch):
             # percent = 100 * k / num_test_batch
@@ -116,12 +122,12 @@ def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
             pred_label = pred_prob > 0.5
             true_label = label_l_cut
 
-            val_acc.append((pred_label == true_label).mean())
-            val_ap.append(average_precision_score(true_label, pred_prob))
-            val_f1.append(f1_score(true_label, pred_label))
-            val_auc.append(roc_auc_score(true_label, pred_prob))
+            acc.append((pred_label == true_label).mean())
+            ap.append(average_precision_score(true_label, pred_prob))
+            f1.append(f1_score(true_label, pred_label))
+            auc.append(roc_auc_score(true_label, pred_prob))
 
-    return np.mean(val_acc), np.mean(val_ap), np.mean(val_f1), np.mean(val_auc)
+    return np.mean(acc), np.mean(ap), np.mean(f1), np.mean(auc)
 
 
 ### Load data and train val test split
@@ -163,7 +169,7 @@ test_ts_l = ts_l[test_flag]
 test_label_l = label_l[test_flag]
 test_e_idx_l = e_idx_l[test_flag]
 
-random.seed(2020)
+np.random.seed(2020)
 logger.info('SUBREDDIT : {}'.format(DATA))
 logger.info('TIME_CUT : {}'.format(time_cut))
 logger.info('TRAINING METHOD : {}'.format(TRAINING_METHOD))
@@ -203,6 +209,11 @@ if TRAINING_METHOD == 'SELECTIVE':
     train_label_l = train_label_l[selective_flag]
     train_e_idx_l = train_e_idx_l[selective_flag]
 
+total_src_l = np.hstack((train_src_l, test_src_l, val_src_l))
+total_dst_l = np.hstack((train_dst_l, test_dst_l, val_dst_l))
+total_ts_l = np.hstack((train_ts_l, test_ts_l, val_ts_l))
+total_e_idx_l = np.hstack((train_e_idx_l, test_e_idx_l, val_e_idx_l))
+
 ### Initialize the data structure for graph and edge sampling
 # build the graph for fast query
 # graph only contains the training data (with 10% nodes removal)
@@ -217,7 +228,7 @@ train_ngh_finder = NeighborFinder(adj_list, uniform=UNIFORM)
 
 # full graph with all the data for the test and validation purpose
 full_adj_list = [[] for _ in range(max_idx + 1)]
-for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
+for src, dst, eidx, ts in zip(total_src_l, total_dst_l, total_e_idx_l, total_ts_l):
     full_adj_list[src].append((dst, eidx, ts))
     full_adj_list[dst].append((src, eidx, ts))
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
@@ -243,8 +254,6 @@ num_batch = math.ceil(num_instance / BATCH_SIZE)
 
 logger.info('num of training instances: {}'.format(num_instance))
 logger.info('num of batches per epoch: {}'.format(num_batch))
-
-idx_list = np.arange(num_instance)  # 0 ~ num_instance
 early_stopper = EarlyStopMonitor(max_round)
 
 for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
@@ -252,7 +261,8 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     # training use only training graph
     tgan.ngh_finder = train_ngh_finder
     acc, ap, f1, auc, m_loss = [], [], [], [], []
-    np.random.shuffle(idx_list)
+    train_src_l, train_dst_l, train_ts_l, train_label_l = \
+        random_shuffle(num_instance, train_src_l, train_dst_l, train_ts_l, train_label_l)
     logger.info('start {} epoch'.format(epoch))
     for k in range(num_batch):  # num_batch = case_num / BATCH_SIZE(200)
         # percent = 100 * k / num_batch
