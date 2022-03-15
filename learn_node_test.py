@@ -270,6 +270,10 @@ logger.addHandler(fh)
 logger.addHandler(ch)
 logger.info(args)
 
+if EMBEDDING_METHOD != 'TGAT':
+    logger.info('Only for Pretrained TGAT Model')
+    logger.info('Exit Program')
+    exit()
 ### Load data and train val test split
 g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
 e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
@@ -316,6 +320,11 @@ val_ts_l = ts_l[val_flag]
 val_label_l = label_l[val_flag]
 val_e_idx_l = e_idx_l[val_flag]
 
+total_src_l = np.hstack((train_src_l, test_src_l, val_src_l))
+total_dst_l = np.hstack((train_dst_l, test_dst_l, val_dst_l))
+total_ts_l = np.hstack((train_ts_l, test_ts_l, val_ts_l))
+total_e_idx_l = np.hstack((train_e_idx_l, test_e_idx_l, val_e_idx_l))
+
 cntr = Counter(g_num)
 MAX_SEQ = cntr.most_common(1)[0][1]
 
@@ -323,6 +332,37 @@ if 0 < SEQ_SLICING:
     MAX_SEQ = round(np.quantile(list(cntr.values()), SEQ_SLICING))
 elif SEQ_SLICING < 0:
     MAX_SEQ = int(-SEQ_SLICING)
+
+#graph labeling
+graph_label_map = {}
+for k in set(g_num):
+    temp_ts_l = ts_l[g_num == k]
+    valid_flag = (temp_ts_l < time_cut)
+
+    if sum(valid_flag) < 2:
+        continue
+
+    if False in valid_flag:
+        graph_label_map[k] = 1
+    else:
+        graph_label_map[k] = 0
+
+#class balancing in train data
+if CLASS_BALANCING == 'BALANCED':
+    neg_k = np.array([])
+    pos_k = np.array([])
+
+    for k in set(train_g_num_l):
+        if k in graph_label_map:
+            if graph_label_map[k]:
+                pos_k = np.append(pos_k, k)
+            else:
+                neg_k = np.append(neg_k, k)
+
+    if len(pos_k) > len(neg_k):
+        major, minor = pos_k, neg_k
+    else:
+        major, minor = neg_k, pos_k
 
 ### Initialize the data structure for graph and edge sampling
 adj_list = [[] for _ in range(max_idx + 1)]
@@ -333,7 +373,7 @@ train_ngh_finder = NeighborFinder(adj_list, uniform=UNIFORM)
 
 # full graph with all the data for the test and validation purpose
 full_adj_list = [[] for _ in range(max_idx + 1)]
-for src, dst, eidx, ts in zip(src_l, dst_l, e_idx_l, ts_l):
+for src, dst, eidx, ts in zip(total_src_l, total_dst_l, total_e_idx_l, total_ts_l):
     full_adj_list[src].append((dst, eidx, ts))
     full_adj_list[dst].append((src, eidx, ts))
 full_ngh_finder = NeighborFinder(full_adj_list, uniform=UNIFORM)
@@ -385,12 +425,13 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
     pred_label = np.array([])
 
     loss = 0
-
+    g_l = np.unique(g_num_l)
+    np.random.shuffle(g_l)
     with torch.no_grad():
         lr_model.eval()
         tgan.eval()
 
-        for i, k in enumerate(set(g_num_l)):
+        for i, k in enumerate(g_l):
 
             temp_src_cut = src_l[g_num_l == k]
             temp_ts_cut = ts_l[g_num_l == k]
@@ -399,8 +440,7 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
 
             src_l_cut = temp_src_cut[valid_flag]
             ts_l_cut = temp_ts_cut[valid_flag]
-
-            label = 1 if False in valid_flag else 0
+            label = graph_label_map[k]
 
             src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, num_layer)
             src_label = torch.cuda.FloatTensor([label])
@@ -473,46 +513,19 @@ for epoch in tqdm(range(args.n_epoch)):
     tgan = tgan.eval()
     lr_model = lr_model.train()
 
+    # random choice
     if CLASS_BALANCING == 'BALANCED':
-        neg_k = np.array([])
-        pos_k = np.array([])
-
-        #class balancing
-        for k in set(train_g_num_l):
-            temp_src_cut = train_src_l[train_g_num_l == k]
-            temp_ts_cut = train_ts_l[train_g_num_l == k]
-
-            valid_flag = (temp_ts_cut < time_cut)
-            src_l_cut = temp_src_cut[valid_flag]
-
-            if False in valid_flag:
-                pos_k = np.append(pos_k, k)
-            else:
-                neg_k = np.append(neg_k, k)
-
-        #random choice
-        if len(pos_k) > len(neg_k):
-            pos_k = np.random.choice(pos_k, len(neg_k))
-        else:
-            neg_k = np.random.choice(neg_k, len(pos_k))
-
-        g_l = np.concatenate((pos_k, neg_k), axis=0)
-
+        major = np.random.choice(major, len(minor), replace=False)
+        g_l = np.hstack((major, minor))
     else:
-        g_l = train_g_num_l
+        g_l = np.unique(train_g_num_l)
 
     np.random.shuffle(g_l)
 
-    for k in set(g_l):
-        temp_src_cut = train_src_l[train_g_num_l == k]
-        temp_ts_cut = train_ts_l[train_g_num_l == k]
-
-        valid_flag = (temp_ts_cut < time_cut)
-
-        src_l_cut = temp_src_cut[valid_flag]
-        ts_l_cut = temp_ts_cut[valid_flag]
-
-        label = 1 if False in valid_flag else 0
+    for k in g_l:
+        src_l_cut = train_src_l[train_g_num_l == k]
+        ts_l_cut = train_ts_l[train_g_num_l == k]
+        label = graph_label_map[k]
 
         lr_optimizer.zero_grad()
         with torch.no_grad():
@@ -525,15 +538,13 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_loss.backward()
         lr_optimizer.step()
 
-    train_acc, train_auc, train_AP, train_recall, train_F1, train_loss = eval_epoch(train_src_l, train_ts_l, train_g_num_l, lr_model, tgan, 0)
     val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_ts_l, val_g_num_l, lr_model, tgan, 0)
-    #torch.save(lr_model.state_dict(), './saved_models/edge_{}_wkiki_node_class.pth'.format(DATA))
     logger.info('epoch: {}:'.format(epoch))
-    logger.info('train loss: {}, val loss: {}'.format(train_loss, val_loss))
-    logger.info('train acc: {}, val acc: {}'.format(train_acc, val_acc))
-    logger.info('train auc: {}, val auc: {}'.format(train_auc, val_auc))
-    logger.info('train ap: {}, val ap: {}'.format(train_AP, val_AP))
-    logger.info('train f1: {}, val f1: {}'.format(train_F1, val_F1))
+    logger.info('val loss: {}'.format(val_loss))
+    logger.info('val acc: {}'.format(val_acc))
+    logger.info('val auc: {}'.format(val_auc))
+    logger.info('val ap: {}'.format(val_AP))
+    logger.info('val f1: {}'.format(val_F1))
 
     if early_stopper.early_stop_check(val_auc):
         logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
@@ -558,5 +569,5 @@ for epoch in tqdm(range(args.n_epoch)):
                     continue
 
 test_acc, test_auc, test_AP, test_recall, test_F1, test_loss = eval_epoch(test_src_l, test_ts_l, test_g_num_l, lr_model, tgan, 1)
-logger.info(f'test auc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
+logger.info(f'test acc: {test_acc}, test auc: {test_auc}, test AP: {test_AP}, test Recall_Score: {test_recall}, test F1: {test_F1}')
 torch.save(lr_model.state_dict(), MODEL_SAVE_PATH)
