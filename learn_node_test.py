@@ -432,7 +432,8 @@ def eval_epoch(src_l, ts_l, g_num_l, lr_model, tgan, data_type, num_layer=NODE_L
         tgan.eval()
 
         for i, k in enumerate(g_l):
-
+            if k not in graph_label_map:
+                continue
             temp_src_cut = src_l[g_num_l == k]
             temp_ts_cut = ts_l[g_num_l == k]
 

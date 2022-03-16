@@ -421,6 +421,8 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
         graphsage.eval()
 
         for i, k in enumerate(g_l):
+            if k not in graph_label_map:
+                continue
             src_l_cut = src_l[g_num_l == k]
             label = graph_label_map[k]
 
@@ -432,7 +434,7 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
             loss += lr_criterion_eval(lr_prob, src_label).item()
 
             graph_num = np.append(graph_num, k)
-            raw_edge_len = np.append(raw_edge_len, len(valid_flag))
+            raw_edge_len = np.append(raw_edge_len, len(g_num[g_num == k]))
             sliced_edge_len = np.append(sliced_edge_len, len(src_l_cut))
             true_label = np.append(true_label, label)
             pred_prob = np.append(pred_prob, lr_prob.cpu().numpy())
