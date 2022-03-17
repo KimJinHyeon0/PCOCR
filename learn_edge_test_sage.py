@@ -273,7 +273,6 @@ def run():
     graphsage = SupervisedGraphSage(2, enc2)
     graphsage.to(device)
     early_stopper = EarlyStopMonitor(max_round)
-    criterion = torch.nn.BCELoss()
 
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=0.0005)
 
@@ -293,13 +292,10 @@ def run():
             label_l_cut = train_label_l[s_idx:e_idx]
 
             optimizer.zero_grad()
-            graphsage.forward(src_l_cut)
 
-            output = graphsage.forward(src_l_cut).sigmoid().data.cpu()
-            pred_prob = output[np.arange(src_l_cut.shape[0]), label_l_cut.astype(np.int).squeeze()]
-            loss = criterion(pred_prob, torch.from_numpy(label_l_cut).float())
+            loss = graphsage.loss(src_l_cut, Variable(torch.cuda.LongTensor(label_l_cut)))
             m_loss.append(loss.item())
-            loss.requires_grad_(True)
+
             loss.backward()
             optimizer.step()
         print(f'Epoch mean Loss : {np.mean(m_loss)}')
