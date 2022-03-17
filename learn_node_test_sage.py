@@ -39,7 +39,7 @@ class MEAN(torch.nn.Module):
 
     def forward(self, x, k):
         if self.post_concat:
-            post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = torch.from_numpy(n_feat[k.astype(np.int)]).to(device)
             x = x.mean(dim=0)
             x = torch.cat((x, post_k), axis=0)
             x = self.dropout(x)
@@ -134,7 +134,7 @@ class LSTM(torch.nn.Module):
             h_out = self.dropout(torch.matmul(attn_score, output))
 
         if self.post_concat:
-            post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = torch.from_numpy(n_feat[k.astype(np.int)]).to(device)
             h_out = torch.unsqueeze(torch.cat((h_out[0], post_k), axis=0), 0)
 
         if self.NUM_FC == 2:
@@ -415,7 +415,8 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
     pred_label = np.array([])
 
     loss = 0
-    g_l = np.random.shuffle(np.unique(g_num_l))
+    g_l = np.unique(g_num_l)
+    np.random.shuffle(g_l)
     with torch.no_grad():
         lr_model.eval()
         graphsage.eval()
