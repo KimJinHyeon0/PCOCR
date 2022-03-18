@@ -12,11 +12,9 @@ import torch
 import pandas as pd
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, recall_score
-from collections import Counter, defaultdict
+from collections import Counter
 
 from utils import EarlyStopMonitor
-from learn_edge_test_gat import GAT, get_training_args
-
 
 class MEAN(torch.nn.Module):
     def __init__(self, input_dim, post_concat, NUM_FC, fc_dim, drop=0.3):
@@ -39,7 +37,8 @@ class MEAN(torch.nn.Module):
 
     def forward(self, x, k):
         if self.post_concat:
-            post_k = torch.from_numpy(n_feat[k.astype(np.int)]).to(device)
+            k = k.astype(np.int64)
+            post_k = n_feat[k].to(device)
             x = x.mean(dim=0)
             x = torch.cat((x, post_k), axis=0)
             x = self.dropout(x)
@@ -134,7 +133,8 @@ class LSTM(torch.nn.Module):
             h_out = self.dropout(torch.matmul(attn_score, output))
 
         if self.post_concat:
-            post_k = torch.from_numpy(n_feat[k.astype(np.int)]).to(device)
+            k = k.astype(np.int64)
+            post_k = n_feat[k].to(device)
             h_out = torch.unsqueeze(torch.cat((h_out[0], post_k), axis=0), 0)
 
         if self.NUM_FC == 2:
@@ -225,18 +225,6 @@ fc_dim = int(fc_dim)
 
 output_dim = 1
 
-#select pre-trained model
-if DATA == 'iama':
-    if TRAINING_METHOD == 'SELECTIVE':
-        gat_num = '000'
-    elif TRAINING_METHOD == 'FULL':
-        gat_num = '001'
-elif DATA == 'showerthoughts':
-    if TRAINING_METHOD == 'SELECTIVE':
-        gat_num = '002'
-    elif TRAINING_METHOD == 'FULL':
-        gat_num = '003'
-
 if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
     n_layer = None
     bidirectional = False
@@ -245,7 +233,6 @@ if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
 MODEL_NUM = str(MODEL_NUM).zfill(3)
 
 print('MODEL_NUM :', MODEL_NUM)
-print('GAT_num :', gat_num)
 print(spec[:])
 ############################
 
@@ -269,27 +256,23 @@ logger.addHandler(ch)
 logger.info(args)
 
 if EMBEDDING_METHOD != 'GAT':
-    logger.info('Only for Pretrained GAT Model')
+    logger.info('Only for GAT Model')
     logger.info('Exit Program')
     exit()
 
 ### Load data and train val test split
 g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
 e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
-n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+n_feat = torch.from_numpy(np.load('./processed/{}_node_feat_GAT.npy'.format(DATA))).to(device)
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
 src_l = g_df.u.values
 dst_l = g_df.i.values
 ts_l = g_df.ts.values
-label_l = g_df.label.values
 
 train_time = 3888000
 test_time = np.quantile(np.unique(g_ts[(g_ts > train_time)]), 0.5)
-
-max_src_index = src_l.max()
-max_idx = max(src_l.max(), dst_l.max())
 
 time_cut_flag = (ts_l < time_cut)
 train_flag = (g_ts < train_time)
@@ -300,27 +283,15 @@ logger.info('Training use all train data')
 train_g_num_l = g_num[train_flag & time_cut_flag]
 train_src_l = src_l[train_flag & time_cut_flag]
 train_dst_l = dst_l[train_flag & time_cut_flag]
-train_label_l = label_l[train_flag & time_cut_flag]
 
 # use the true test dataset
 test_g_num_l = g_num[test_flag & time_cut_flag]
 test_src_l = src_l[test_flag & time_cut_flag]
 test_dst_l = dst_l[test_flag & time_cut_flag]
-test_label_l = label_l[test_flag & time_cut_flag]
 
 val_g_num_l = g_num[val_flag & time_cut_flag]
 val_src_l = src_l[val_flag & time_cut_flag]
 val_dst_l = dst_l[val_flag & time_cut_flag]
-val_label_l = label_l[val_flag & time_cut_flag]
-
-total_src_l = np.hstack((train_src_l, test_src_l, val_src_l))
-total_dst_l = np.hstack((train_dst_l, test_dst_l, val_dst_l))
-
-edge_index = np.row_stack((total_src_l, total_dst_l))
-edge_index = torch.tensor(edge_index, dtype=torch.long, device=device)
-node_features = torch.tensor(n_feat, device=device)
-
-graph_data = (node_features, edge_index)
 
 cntr = Counter(g_num)
 MAX_SEQ = cntr.most_common(1)[0][1]
@@ -361,32 +332,10 @@ if CLASS_BALANCING == 'BALANCED':
     else:
         major, minor = neg_k, pos_k
 
-
-device = torch.device('cuda:{}'.format(GPU))
-
-config = get_training_args()
-print(config)
-gat = GAT(
-        num_of_layers=config['num_of_layers'],
-        num_heads_per_layer=config['num_heads_per_layer'],
-        num_features_per_layer=config['num_features_per_layer'],
-        add_skip_connection=config['add_skip_connection'],
-        bias=config['bias'],
-        dropout=config['dropout'],
-        log_attention_weights=False  # no need to store attentions, used only in playground.py while visualizing
-    ).to(device)
-
 early_stopper = EarlyStopMonitor(max_round)
-
 num_instance = len(train_src_l)
 logger.debug('num of training instances: {}'.format(num_instance))
 logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
-logger.info('loading saved GAT model')
-model_path = f'./saved_models/{gat_num}-GAT.pth'
-gat.load_state_dict(torch.load(model_path))
-gat.eval()
-logger.info(f'{EMBEDDING_METHOD} LOADED')
-logger.info('model num: {}'.format(MODEL_NUM))
 logger.info('Start training Graph classification task')
 
 if PRED_METHOD == 'LSTM':
@@ -417,16 +366,14 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
     np.random.shuffle(g_l)
     with torch.no_grad():
         lr_model.eval()
-        graphsage.eval()
 
         for i, k in enumerate(g_l):
             if k not in graph_label_map:
                 continue
-            src_l_cut = src_l[g_num_l == k]
+            src_l_cut = torch.from_numpy(src_l[g_num_l == k]).to(device)
             label = graph_label_map[k]
 
-            graphsage.forward(src_l_cut)
-            src_embed = graphsage.embeds
+            src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
             src_label = torch.cuda.FloatTensor([label])
 
             lr_prob = lr_model(src_embed, k).sigmoid()
@@ -494,7 +441,6 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
     return acc, auc_roc, AP, recall, F1, loss / num_instance
 
 for epoch in tqdm(range(args.n_epoch)):
-    gat = gat.eval()
     lr_model = lr_model.train()
 
     # random choice
@@ -507,20 +453,11 @@ for epoch in tqdm(range(args.n_epoch)):
     np.random.shuffle(g_l)
 
     for k in g_l:
-        print(k)
-        src_l_cut = train_src_l[train_g_num_l == k]
+        src_l_cut = torch.from_numpy(train_src_l[train_g_num_l == k]).to(device)
         label = graph_label_map[k]
 
-        src_l_cut = torch.from_numpy(src_l_cut).to(device)
-
-        print(src_l_cut, src_l_cut.shape)
         lr_optimizer.zero_grad()
-        with torch.no_grad():
-            test, _ = gat(graph_data)
-            test = test.cpu().numpy()
-
-        print(test, test.shape)
-        exit()
+        src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
         src_label = torch.cuda.FloatTensor([label])
 
         lr_prob = lr_model(src_embed, k).sigmoid()
