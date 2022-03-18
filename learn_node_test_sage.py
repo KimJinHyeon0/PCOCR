@@ -377,9 +377,6 @@ graphsage = SupervisedGraphSage(2, enc2)
 graphsage.to(device)
 early_stopper = EarlyStopMonitor(max_round)
 
-optimizer = torch.optim.Adam(graphsage.parameters(), lr=LEARNING_RATE)
-criterion = torch.nn.BCELoss()
-
 num_instance = len(train_src_l)
 logger.debug('num of training instances: {}'.format(num_instance))
 logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
