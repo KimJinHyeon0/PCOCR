@@ -77,8 +77,8 @@ for subreddit in ['iama', 'showerthoughts']:
     print(f'PRETRAINED_MODEL = {PRETRAINED_MODEL}')
     print(f'\nExtracting Embedding | subreddit : {subreddit}\n')
     SENTENCE_DF_PATH = f'./data/{subreddit}_sentence.csv'
-    OUT_EDGE_FEAT = f'./processed/{subreddit}_edge_feat.npy'
-    OUT_NODE_FEAT = f'./processed/{subreddit}_node_feat.npy'
+    OUT_EDGE_FEAT = f'./processed/{subreddit}_edge_feat_GloVe.npy'
+    OUT_NODE_FEAT = f'./processed/{subreddit}_node_feat_GloVe.npy'
     output = embeddingExtract(subreddit)
 
     np.save(OUT_NODE_FEAT, output)
