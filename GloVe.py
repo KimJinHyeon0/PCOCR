@@ -56,10 +56,11 @@ def embeddingExtract(subreddit):
     print(f'Processing Text Tokenization...')
     preprocessed_text = cleaned_text.apply(lambda x: text_field.preprocess(x))
 
-
-    for index, text in preprocessed_text.items():
-        if int(index) % 1000 == 0:
-            print(f'{subreddit} | {index}/{max_idx}')
+    num_instance = len(preprocessed_text)
+    print(f'NUM_INSTANCE = {num_instance}')
+    for i, (index, text) in enumerate(preprocessed_text.items()):
+        if i % 1000 == 0:
+            print(f'{subreddit} | {i}/{num_instance}')
         text_field.build_vocab([text], vectors=PRETRAINED_MODEL)
         vocab = text_field.vocab
         one_tensor = torch.ones((vocab.vectors.shape[0], 1))
@@ -89,7 +90,6 @@ for subreddit in ['iama', 'showerthoughts']:
     print(f'Saved {subreddit}_edge_feat_GloVe.npy')
 
     del output
-    torch.cuda.empty_cache()
     print('-' * 50)
 
 print('Done')
