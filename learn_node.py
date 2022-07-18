@@ -102,9 +102,9 @@ logger.addHandler(ch)
 logger.info(args)
 
 ### Load data and train val test split
-g_df = pd.read_csv('./processed/ml_{}.csv'.format(DATA))
-e_feat = np.load('./processed/ml_{}.npy'.format(DATA))
-n_feat = np.load('./processed/ml_{}_node.npy'.format(DATA))
+g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
+e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
+n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
 val_time, test_time = list(np.quantile(g_df.ts, [0.70, 0.85]))
 
@@ -119,8 +119,8 @@ max_idx = max(src_l.max(), dst_l.max())
 
 total_node_set = set(np.unique(np.hstack([g_df.u.values, g_df.i.values])))
 
-valid_train_flag = (ts_l <= test_time)  
-valid_val_flag = (ts_l <= test_time) 
+valid_train_flag = (ts_l <= test_time)
+valid_val_flag = (ts_l <= test_time)
 assignment = np.random.randint(0, 10, len(valid_train_flag))
 valid_train_flag *= (assignment >= 2)
 valid_val_flag *= (assignment < 2)
@@ -246,7 +246,7 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_optimizer.zero_grad()
         with torch.no_grad():
             src_embed = tgan.tem_conv(src_l_cut, ts_l_cut, NODE_LAYER)
-        
+
         src_label = torch.from_numpy(label_l_cut).float().to(device)
         lr_prob = lr_model(src_embed).sigmoid()
         lr_loss = lr_criterion(lr_prob, src_label)

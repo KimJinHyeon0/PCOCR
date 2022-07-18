@@ -62,7 +62,6 @@ LEARNING_RATE = args.lr
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 
-
 MODEL_SAVE_PATH = f'./saved_models/{args.prefix}-{args.agg_method}-{args.attn_mode}-{args.data}.pth'
 get_checkpoint_path = lambda epoch: f'./saved_checkpoints/{args.prefix}-{args.agg_method}-{args.attn_mode}-{args.data}-{epoch}.pth'
 
@@ -80,7 +79,6 @@ ch.setFormatter(formatter)
 logger.addHandler(fh)
 logger.addHandler(ch)
 logger.info(args)
-
 
 def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
     val_acc, val_ap, val_f1, val_auc = [], [], [], []
@@ -120,18 +118,12 @@ def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
     return np.mean(val_acc), np.mean(val_ap), np.mean(val_f1), np.mean(val_auc)
 
 ### Load data and train val test split
-g_df = pd.read_csv('./processed/ml_{}.csv'.format(DATA))
+g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
 e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
-n_feat = np.load('./processed/{}.node_feat.npy'.format(DATA))
+n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
 
-val_time = 3888000
+val_time = 3888000 # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 test_time = np.quantile(g_df[g_df['ts'] > val_time].ts, 0.5)
-
-"""
-for reddit data
-val_time = 1882469.2648
-test_time = 2261813.6575999996
-"""
 
 src_l = g_df.u.values
 dst_l = g_df.i.values
@@ -145,7 +137,7 @@ random.seed(2020)
 total_node_set = set(np.unique(np.hstack([g_df.u.values, g_df.i.values])))
 num_total_unique_nodes = len(total_node_set)
 
-#mask_node_set : time stamp가 val_time 이후인 node set (10% random sample)
+#mask_node_set : val_time 이후 conversation에 관여된 node set -> 10% random sample
 mask_node_set = set(random.sample(set(src_l[ts_l > val_time]).union(set(dst_l[ts_l > val_time])), int(0.1 * num_total_unique_nodes)))
 mask_src_flag = g_df.u.map(lambda x: x in mask_node_set).values
 mask_dst_flag = g_df.i.map(lambda x: x in mask_node_set).values
@@ -153,7 +145,6 @@ none_node_flag = (1 - mask_src_flag) * (1 - mask_dst_flag)
 
 valid_train_flag = (g_df['ts'] < val_time) * (none_node_flag > 0)
 
-#valid_train_flag = timestamp <= val_time and val_time 이후의 conversation이 없는 node들의 edge
 train_src_l = src_l[valid_train_flag]
 train_dst_l = dst_l[valid_train_flag]
 train_ts_l = ts_l[valid_train_flag]
@@ -240,7 +231,7 @@ num_batch = math.ceil(num_instance / BATCH_SIZE)
 logger.info('num of training instances: {}'.format(num_instance))
 logger.info('num of batches per epoch: {}'.format(num_batch))
 
-idx_list = np.arange(num_instance) # 0~ num_instance
+idx_list = np.arange(num_instance) # 0 ~ num_instance
 np.random.shuffle(idx_list)
 early_stopper = EarlyStopMonitor()
 
@@ -315,7 +306,6 @@ for epoch in range(NUM_EPOCH): # NUM_EPOCH = 50
         break
     else:
         torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
-
 
 # testing phase use all information
 tgan.ngh_finder = full_ngh_finder
