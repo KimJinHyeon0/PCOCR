@@ -4,6 +4,7 @@ import pandas as pd
 import time
 
 from torchtext.data import Field
+from torchtext.vocab import GloVe, FastText
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from transformers import BertTokenizer, BertModel
@@ -18,38 +19,46 @@ class get_word_embedding():
         self.DEFAULT_TOKENIZER = False
 
         self.PRETRAINED_MODEL = config['pretrained_model']
-        self.OUTPUT_DIMENSION = config['output_dimension']
         self.TEXT_CLEANING = config['text_cleaning']
         self.SAVE = config['save']
 
         self.CORPUS = pd.read_csv(f'./data/{self.SUBREDDIT}_sentence.csv', index_col=0, na_filter=False)
 
-
         if self.PRETRAINED_MODEL == 'bert-base-uncased':
             self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
             self.model = BertModel.from_pretrained('bert-base-uncased')
-            self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
         elif self.PRETRAINED_MODEL == 'roberta-base':
             self.tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
             self.model = RobertaModel.from_pretrained('roberta-base')
-            self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
         elif self.PRETRAINED_MODEL == 'deberta-base':
             self.tokenizer = DebertaTokenizer.from_pretrained('microsoft/deberta-base')
             self.model = DebertaModel.from_pretrained('microsoft/deberta-base')
-            self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
-        elif self.PRETRAINED_MODEL == 'fasttext.en.300d' or\
-             self.PRETRAINED_MODEL == 'glove.840B.300d' or\
-             self.PRETRAINED_MODEL == 'tf-idf':
+        elif self.PRETRAINED_MODEL == 'fasttext':
             self.DEFAULT_TOKENIZER = True
-            self.tokenizer = Field(tokenize='basic_english', lower=True)
-            self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, self.OUTPUT_DIMENSION), device=cuda)
+            self.model = FastText(language='en')
+
+        elif self.PRETRAINED_MODEL == 'glove':
+            self.DEFAULT_TOKENIZER = True
+            self.model = GloVe(name='840B', dim=300)
+
+        elif self.PRETRAINED_MODEL == 'tf-idf':
+            self.DEFAULT_TOKENIZER = True
 
         else:
             raise ValueError(
                 "Could not find pretrained model \nAvailable : bert-base-uncased / fasttext.en.300d / glove.840B.300d / tf-idf / roberta_base / deberta_large")
+
+        if self.DEFAULT_TOKENIZER:
+            self.tokenizer = Field(tokenize='basic_english', lower=True)
+            self.OUTPUT_DIMENSION = 300
+        else:
+            self.OUTPUT_DIMENSION = 768
+
+        self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, self.OUTPUT_DIMENSION), device=cuda)
+
 
     def text_cleaning(self, text):
         from bs4 import BeautifulSoup
@@ -127,14 +136,7 @@ class get_word_embedding():
                 self.FEATURE[index] = embedding
 
             else:
-                self.tokenizer.build_vocab([text], vectors=self.PRETRAINED_MODEL)
-                vocab = self.tokenizer.vocab
-                vectors = vocab.vectors.to(cuda)
-
-                one_tensor = torch.ones((vectors.shape[0], 1), device=cuda)
-                for token, cnt in vocab.freqs.items():
-                    one_tensor[vocab.stoi[token]] = cnt
-                output = vectors.mul(one_tensor)
+                output = self.model.get_vecs_by_tokens(text)
                 embedding = torch.mean(output, dim=0)
                 self.FEATURE[index] = embedding
 
@@ -150,13 +152,9 @@ class get_word_embedding():
         pretrained_model : 'bert-base-uncased'  
                            'roberta-base'
                            'deberta-base'
-                           'fasttext.en.300d'
-                           'glove.840B.300d' 
-                           'tf-idf' - not supported
-                           
-        output_dimension : 'bert-base-uncased' - 768(fixed, no need to configure)
-                           'roberta_base' - 768(fixed, no need to configure)
-                           'deberta_base' - 768(fixed, no need to configure)
+                           'fasttext'
+                           'glove' 
+                           'tf-idf' - not supported yet
         
         text_cleaning : bool
         
@@ -167,10 +165,9 @@ class get_word_embedding():
 
 CONFIGS = {
     'subreddit' : 'iama',
-    'pretrained_model' : 'roberta-base',
-    'output_dimension' : 300,
+    'pretrained_model' : 'glove',
     'text_cleaning' : True,
-    'save' : False
+    'save' : True
 }
 
 model = get_word_embedding(CONFIGS)
