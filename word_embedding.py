@@ -26,18 +26,18 @@ class get_word_embedding():
 
 
         if self.PRETRAINED_MODEL == 'bert-base-uncased':
-            self.tokenizer = BertTokenizer.from_pretrained(self.PRETRAINED_MODEL)
-            self.model = BertModel.from_pretrained(self.PRETRAINED_MODEL)
+            self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+            self.model = BertModel.from_pretrained('bert-base-uncased')
             self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
         elif self.PRETRAINED_MODEL == 'roberta-base':
-            self.tokenizer = RobertaTokenizer.from_pretrained(self.PRETRAINED_MODEL)
-            self.model = RobertaModel.from_pretrained(self.PRETRAINED_MODEL)
+            self.tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+            self.model = RobertaModel.from_pretrained('roberta-base')
             self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
-        elif self.PRETRAINED_MODEL == 'microsoft/deberta-base':
-            self.tokenizer = DebertaTokenizer.from_pretrained(self.PRETRAINED_MODEL)
-            self.model = DebertaModel.from_pretrained(self.PRETRAINED_MODEL)
+        elif self.PRETRAINED_MODEL == 'deberta-base':
+            self.tokenizer = DebertaTokenizer.from_pretrained('microsoft/deberta-base')
+            self.model = DebertaModel.from_pretrained('microsoft/deberta-base')
             self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, 768), device=cuda)
 
         elif self.PRETRAINED_MODEL == 'fasttext.en.300d' or\
@@ -148,15 +148,15 @@ class get_word_embedding():
                     'showerthoughts'
         
         pretrained_model : 'bert-base-uncased'  
-                          'roberta-base'
-                          'microsoft/deberta-base'
-                          'fasttext.en.300d'
-                          'glove.840B.300d' 
-                          'tf-idf' - not supported
+                           'roberta-base'
+                           'deberta-base'
+                           'fasttext.en.300d'
+                           'glove.840B.300d' 
+                           'tf-idf' - not supported
                            
-        output_dimension : 'bert-base-uncased' -  768(fixed, no need to configure)
-                           'roberta_base' -  768(fixed, no need to configure)
-                           'deberta_base' -  768(fixed, no need to configure)
+        output_dimension : 'bert-base-uncased' - 768(fixed, no need to configure)
+                           'roberta_base' - 768(fixed, no need to configure)
+                           'deberta_base' - 768(fixed, no need to configure)
         
         text_cleaning : bool
         
