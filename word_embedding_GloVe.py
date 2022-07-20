@@ -1,11 +1,12 @@
 import torch
-from torchtext.vocab import GloVe
 from torchtext.data import Field
 
 import numpy as np
 import pandas as pd
 import re
 from bs4 import BeautifulSoup
+import time
+cuda = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def text_cleaning(text):
     '''
@@ -47,7 +48,7 @@ def embeddingExtract(subreddit):
     max_idx = sentence_df.index.max()
 
     print(f'Total Idx = {max_idx}')
-    feature = torch.zeros((max_idx + 1, 300), device='cpu')
+    feature = torch.zeros((max_idx + 1, 300), device=cuda)
 
     text_field = Field(tokenize='basic_english', lower=True)
     print(f'Processing Text Cleaning...')
@@ -58,16 +59,19 @@ def embeddingExtract(subreddit):
 
     num_instance = len(preprocessed_text)
     print(f'NUM_INSTANCE = {num_instance}')
+    start = time.time()
     for i, (index, text) in enumerate(preprocessed_text.items()):
         if i % 1000 == 0:
-            print(f'{subreddit} | {i}/{num_instance}')
+            print(f'{subreddit} | {i}/{num_instance} ... {round(i/num_instance, 3)}% | avg_time = {round((time.time()-start)/1000, 3)}s')
+            start = time.time()
         text_field.build_vocab([text], vectors=PRETRAINED_MODEL)
         vocab = text_field.vocab
-        one_tensor = torch.ones((vocab.vectors.shape[0], 1))
+        vectors = vocab.vectors.to(cuda)
+        one_tensor = torch.ones((vectors.shape[0], 1), device=cuda)
 
         for token, cnt in vocab.freqs.items():
             one_tensor[vocab.stoi[token]] = cnt
-        output = vocab.vectors.mul(one_tensor)
+        output = vectors.mul(one_tensor)
         embedding = torch.mean(output, dim=0)
         feature[index] = embedding
 
@@ -78,16 +82,16 @@ for subreddit in ['iama', 'showerthoughts']:
     print(f'PRETRAINED_MODEL = {PRETRAINED_MODEL}')
     print(f'\nExtracting Embedding | subreddit : {subreddit}\n')
     SENTENCE_DF_PATH = f'./data/{subreddit}_sentence.csv'
-    OUT_EDGE_FEAT = f'./processed/{subreddit}_edge_feat_GloVe.npy'
-    OUT_NODE_FEAT = f'./processed/{subreddit}_node_feat_GloVe.npy'
-    output = embeddingExtract(subreddit)
+    OUT_EDGE_FEAT = f'./processed/{subreddit}_edge_feat_{PRETRAINED_MODEL}.npy'
+    OUT_NODE_FEAT = f'./processed/{subreddit}_node_feat_{PRETRAINED_MODEL}.npy'
+    output = embeddingExtract(subreddit).cpu()
 
     np.save(OUT_NODE_FEAT, output)
-    print(f'\nSaved {subreddit}_node_feat_GloVe.npy')
+    print(f'\nSaved {subreddit}_node_feat_{PRETRAINED_MODEL}.npy')
 
     empty_feat = np.ones_like(output)
     np.save(OUT_EDGE_FEAT, empty_feat)
-    print(f'Saved {subreddit}_edge_feat_GloVe.npy')
+    print(f'Saved {subreddit}_edge_feat_{PRETRAINED_MODEL}.npy')
 
     del output
     print('-' * 50)
