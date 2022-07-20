@@ -4,13 +4,12 @@ import numpy as np
 import pandas as pd
 import re
 from bs4 import BeautifulSoup
-
+import time
 cuda = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 model = BertModel.from_pretrained('bert-base-uncased')
 model.to(cuda)
-
 
 def text_cleaning(text):
     '''
@@ -48,18 +47,24 @@ def text_cleaning(text):
 
 
 def embeddingExtract(subreddit):
-    sentence_df = pd.read_csv(SENTENCE_DF_PATH, index_col=0)
+    sentence_df = pd.read_csv(SENTENCE_DF_PATH, index_col=0, na_filter=False)
     max_idx = sentence_df.index.max()
 
-    print('Total Idx = ', max_idx)
+    print(f'Total Idx = {max_idx}')
     feature = torch.zeros((max_idx + 1, 768), device='cpu')
 
-    for index, row in sentence_df.iterrows():
-        raw_text = str(row['raw_text'])
-        if int(index) % 1000 == 0:
-            print('{} | {}/{}'.format(subreddit, index, max_idx))
-        cleaned_text = text_cleaning(raw_text)
-        inputs = tokenizer(cleaned_text, return_tensors="pt", truncation=True).to(cuda)
+    print(f'Processing Text Cleaning...')
+    cleaned_text = sentence_df['raw_text'].apply(lambda x: text_cleaning(x))
+
+    num_instance = len(cleaned_text)
+    print(f'NUM_INSTANCE = {num_instance}')
+    start = time.time()
+    for i, (index, text) in enumerate(cleaned_text.items()):
+        if i % 1000 == 0:
+            print(f'{subreddit} | {i}/{num_instance} ... {round(i/num_instance, 3)}% | avg_time = {round((time.time()-start)/1000, 3)}s')
+            start = time.time()
+
+        inputs = tokenizer(text, return_tensors="pt", truncation=True).to(cuda)
         with torch.no_grad():
             outputs = model(**inputs)
         last_hidden_states = outputs.last_hidden_state
@@ -68,21 +73,21 @@ def embeddingExtract(subreddit):
 
     return feature
 
-
-
 for subreddit in ['iama', 'showerthoughts']:
-    print('\nExtracting Embedding | subreddit : {}\n'.format(subreddit))
-    SENTENCE_DF_PATH = './data/{}_sentence.csv'.format(subreddit)
-    OUT_EDGE_FEAT = './processed/{}_edge_feat.npy'.format(subreddit)
-    OUT_NODE_FEAT = './processed/{}_node_feat.npy'.format(subreddit)
+    PRETRAINED_MODEL = 'BERT'
+    print(f'PRETRAINED_MODEL = {PRETRAINED_MODEL}')
+    print(f'\nExtracting Embedding | subreddit : {subreddit}\n')
+    SENTENCE_DF_PATH = f'./data/{subreddit}_sentence.csv'
+    OUT_EDGE_FEAT = f'./processed/{subreddit}_edge_feat_{PRETRAINED_MODEL}.npy'
+    OUT_NODE_FEAT = f'./processed/{subreddit}_node_feat_{PRETRAINED_MODEL}.npy'
     output = embeddingExtract(subreddit).cpu()
 
     np.save(OUT_NODE_FEAT, output)
-    print('\nSaved {}_node_feat.npy'.format(subreddit))
+    print(f'\nSaved {subreddit}_node_feat_{PRETRAINED_MODEL}.npy')
 
     empty_feat = np.ones_like(output)
     np.save(OUT_EDGE_FEAT, empty_feat)
-    print('Saved {}_edge_feat.npy'.format(subreddit))
+    print(f'Saved {subreddit}_edge_feat_{PRETRAINED_MODEL}.npy')
 
     del output
     torch.cuda.empty_cache()
