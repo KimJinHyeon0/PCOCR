@@ -116,7 +116,7 @@ class get_word_embedding():
         start = time.time()
         for i, (index, text) in enumerate(self.CORPUS.items()):
             if i % 1000 == 0:
-                print(f'{self.PRETRAINED_MODEL} | {self.SUBREDDIT} | {i}/{num_instance} ... {round(i / num_instance, 3)}% | avg_time = {round((time.time() - start) / 1000, 3)}s')
+                print(f'{self.PRETRAINED_MODEL} | {self.SUBREDDIT} | {i}/{num_instance} ... {round(i*100 / num_instance, 3)}% | avg_time = {round((time.time() - start) / 1000, 3)}s')
                 start = time.time()
 
             if not self.DEFAULT_TOKENIZER:
