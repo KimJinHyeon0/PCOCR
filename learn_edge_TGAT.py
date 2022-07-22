@@ -57,32 +57,48 @@ USE_TIME = args.time
 AGG_METHOD = args.agg_method
 ATTN_MODE = args.attn_mode
 SEQ_LEN = NUM_NEIGHBORS
-DATA = args.data
 NUM_LAYER = args.n_layer
 LEARNING_RATE = args.lr
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 
-TRAINING_METHOD = 'FULL'
-time_cut = 324000
+'''
+=====CONFIGS=====
+
+        SUBREDDIT : 'iama'
+                    'showerthoughts'
+        
+        TRAINING_METHOD = 'SELECTIVE'
+                          'FULL'
+                          
+        WORD_EMBEDDING : 'bert-base-uncased'  
+                         'roberta-base'
+                         'deberta-base'
+                         'fasttext'
+                         'glove' 
+                         'tf-idf' - not supported yet
+
+        TIME_CUT : int
+
+        max_round : int
+
+=====CONFIGS=====
+'''
+SUBREDDIT = 'iama'
+TRAINING_METHOD = 'SELECTIVE'
+WORD_EMBEDDING = 'bert-base-uncased'
+TIME_CUT = 309000
 max_round = 10
 
-MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
-try:
-    saved_model = pd.read_csv(MODEL_PERFORMANCE_PATH, index_col=0)
-    MODEL_NUM = saved_model.index[-1] + 1
-except:
-    MODEL_NUM = 0
-MODEL_NUM = '000'
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-TGAT.pth'
+MODEL_SAVE_PATH = f'./saved_models/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{MODEL_NUM}-TGAT-{epoch}.pth'
+    epoch: f'./saved_checkpoints/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler('log/{}.log'.format(str(time.time())))
+fh = logging.FileHandler(f'log/{str(time.time())}.log')
 fh.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.WARN)
@@ -131,9 +147,9 @@ def eval_one_epoch(hint, tgan, sampler, src, dst, ts, label):
 
 
 ### Load data and train val test split
-g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA), index_col=0)
-e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
-n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+g_df = pd.read_csv(f'./processed/{SUBREDDIT}_structure.csv', index_col=0)
+n_feat = np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy')
+e_feat = np.load(f'./processed/{SUBREDDIT}_edge_feat_{n_feat.shape[1]}.npy')
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -170,12 +186,13 @@ test_label_l = label_l[test_flag]
 test_e_idx_l = e_idx_l[test_flag]
 
 np.random.seed(2020)
-logger.info('SUBREDDIT : {}'.format(DATA))
-logger.info('TIME_CUT : {}'.format(time_cut))
-logger.info('TRAINING METHOD : {}'.format(TRAINING_METHOD))
+logger.info(f'SUBREDDIT : {SUBREDDIT}')
+logger.info(f'TRAINING METHOD : {TRAINING_METHOD}')
+logger.info(f'TIME_CUT : {TIME_CUT}')
+logger.info(f'WORD_EMBEDDING : {WORD_EMBEDDING}')
 
 if TRAINING_METHOD == 'SELECTIVE':
-    time_cut_flag = (train_ts_l < time_cut)
+    time_cut_flag = (train_ts_l < TIME_CUT)
 
     train_g_num = train_g_num[time_cut_flag]
     train_src_l = train_src_l[time_cut_flag]
@@ -240,7 +257,7 @@ test_rand_sampler = RandEdgeSampler(test_src_l, test_dst_l)
 # nn_test_rand_sampler = RandEdgeSampler(nn_test_src_l, nn_test_dst_l)
 
 ### Model initialize
-device = torch.device('cuda:{}'.format(GPU))
+device = torch.device(f'cuda:{GPU}')
 tgan = TGAN(train_ngh_finder, n_feat, e_feat,
             num_layers=NUM_LAYER, use_time=USE_TIME, agg_method=AGG_METHOD, attn_mode=ATTN_MODE,
             seq_len=SEQ_LEN, n_head=NUM_HEADS, drop_out=DROP_OUT, node_dim=NODE_DIM, time_dim=TIME_DIM)
@@ -249,11 +266,11 @@ optimizer = torch.optim.Adam(tgan.parameters(), lr=LEARNING_RATE)
 criterion = torch.nn.BCELoss()
 tgan = tgan.to(device)
 
-num_instance = len(train_src_l)  # case num?
+num_instance = len(train_src_l)
 num_batch = math.ceil(num_instance / BATCH_SIZE)
 
-logger.info('num of training instances: {}'.format(num_instance))
-logger.info('num of batches per epoch: {}'.format(num_batch))
+logger.info(f'num of training instances: {num_instance}')
+logger.info(f'num of batches per epoch: {num_batch}')
 early_stopper = EarlyStopMonitor(max_round)
 
 for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
@@ -263,7 +280,7 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     acc, ap, f1, auc, m_loss = [], [], [], [], []
     train_src_l, train_dst_l, train_ts_l, train_label_l = \
         random_shuffle(num_instance, train_src_l, train_dst_l, train_ts_l, train_label_l)
-    logger.info('start {} epoch'.format(epoch))
+    logger.info(f'start {epoch} epoch')
     for k in range(num_batch):  # num_batch = case_num / BATCH_SIZE(200)
         # percent = 100 * k / num_batch
         # if k % int(0.2 * num_batch) == 0:
@@ -303,15 +320,15 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     #                                                               nn_val_src_l,
     #                                                               nn_val_dst_l, nn_val_ts_l, nn_val_label_l)
 
-    logger.info('epoch: {}:'.format(epoch))
-    logger.info('Epoch mean loss: {}'.format(np.mean(m_loss)))
-    logger.info('train acc: {}, val acc: {}'.format(np.mean(acc), val_acc))
-    logger.info('train auc: {}, val auc: {}'.format(np.mean(auc), val_auc))
-    logger.info('train ap: {}, val ap: {}'.format(np.mean(ap), val_ap))
-    logger.info('train f1: {}, val f1: {}'.format(np.mean(f1), val_f1))
+    logger.info(f'epoch: {epoch}:')
+    logger.info(f'Epoch mean loss: {np.mean(m_loss)}')
+    logger.info(f'train acc: {np.mean(acc)}, val acc: {val_acc}')
+    logger.info(f'train auc: {np.mean(auc)}, val auc: {val_auc}')
+    logger.info(f'train ap: {np.mean(ap)}, val ap: {val_ap}')
+    logger.info(f'train f1: {np.mean(f1)}, val f1: {val_f1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
+        logger.info(f'No improvment over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)
@@ -319,16 +336,15 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
         logger.info(f'Loaded the best model at epoch {best_epoch} for inference')
         tgan.eval()
         os.remove(best_model_path)
-        logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, best_epoch))
         break
     else:
         if early_stopper.is_best:
             torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
-            logger.info('Saved {}-TGAT-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
+            logger.info(f'Saved TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{early_stopper.best_epoch}.pth')
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
-                    logger.info('Deleted {}-TGAT-{}.pth'.format(MODEL_NUM, i))
+                    logger.info(f'Deleted TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{i}.pth')
                 except:
                     continue
 
@@ -339,7 +355,7 @@ test_acc, test_ap, test_f1, test_auc = eval_one_epoch('test for old nodes', tgan
 
 # nn_test_acc, nn_test_ap, nn_test_f1, nn_test_auc = eval_one_epoch('test for new nodes', tgan, nn_test_rand_sampler, nn_test_src_l, nn_test_dst_l, nn_test_ts_l, nn_test_label_l)
 
-logger.info('Test statistics: Old nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.format(test_acc, test_auc, test_ap, test_f1))
+logger.info(f'Test statistics: Old nodes -- acc: {test_acc}, auc: {test_auc}, ap: {test_ap}, f1: {test_ap}')
 # logger.info('Test statistics: New nodes -- acc: {}, auc: {}, ap: {}, f1: {}'.format(nn_test_acc, nn_test_auc, nn_test_ap, nn_test_f1))
 
 logger.info('Saving TGAN model')
