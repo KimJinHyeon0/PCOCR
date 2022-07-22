@@ -1,5 +1,3 @@
-"""Unified interface to all dynamic graph model experiments"""
-
 import os
 import logging
 import time
@@ -171,7 +169,6 @@ parser.add_argument('--time_dim', type=int, default=None, help='Dimentions of th
 parser.add_argument('--agg_method', type=str, choices=['attn', 'lstm', 'mean'], help='local aggregation method', default='attn')
 parser.add_argument('--attn_mode', type=str, choices=['prod', 'map'], default='prod')
 parser.add_argument('--time', type=str, choices=['time', 'pos', 'empty'], help='how to use time information', default='time')
-
 parser.add_argument('--new_node', action='store_true', help='model new node')
 parser.add_argument('--uniform', action='store_true', help='take uniform sampling from temporal neighbors')
 
@@ -201,10 +198,25 @@ NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 max_round = 10
 
-### Model initialize
+### set up logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler(f'log/{str(time.time())}.log')
+fh.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.WARN)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+logger.addHandler(fh)
+logger.addHandler(ch)
+logger.info(args)
+
+# GPU configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#############################
+# load hyperparameters of latest implementation
 test_list = pd.read_csv('test_list.csv', index_col=0)
 
 MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
@@ -216,57 +228,34 @@ except:
 
 spec = test_list.loc[MODEL_NUM]
 
-DATA, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
+SUBREDDIT, WORD_EMBEDDING, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
 lstm_layer, NUM_FC, fc_dim, hidden_dim, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:]
 bidirectional = bool(bidirectional)
 post_concat = bool(post_concat)
 hidden_dim = int(hidden_dim)
 fc_dim = int(fc_dim)
-
 output_dim = 1
 
-if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
+if PRED_METHOD == 'MEAN':
     n_layer = None
     bidirectional = False
     sampling_method = None
 
 MODEL_NUM = str(MODEL_NUM).zfill(3)
-
-print('MODEL_NUM :', MODEL_NUM)
-print(spec[:])
-############################
+logger.info(f'MODEL_NUM : {MODEL_NUM}')
 
 MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
 get_checkpoint_path = lambda \
         epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
 
-### set up logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler('log/{}.log'.format(str(time.time())))
-fh.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.WARN)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-fh.setFormatter(formatter)
-ch.setFormatter(formatter)
-logger.addHandler(fh)
-logger.addHandler(ch)
-logger.info(args)
-
-if EMBEDDING_METHOD != 'ONES':
-    logger.info('Only for ONES Model')
+if EMBEDDING_METHOD != 'Not-Pretrained':
+    logger.info('Only for Not-Pretrained Model')
     logger.info('Exit Program')
     exit()
 
-### Load data and train val test split
-g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
-e_feat = np.load('./processed/{}_np_ones_edge_feat.npy'.format(DATA))
-if EMBEDDING_METHOD == 'ONES':
-    n_feat = torch.from_numpy(np.load('./processed/{}_np_ones_edge_feat.npy'.format(DATA))).to(device)
-elif EMBEDDING_METHOD == 'GAT':
-    n_feat = torch.from_numpy(np.load('./processed/{}_node_feat_GAT.npy'.format(DATA))).to(device)
+# Load data and train val test split
+g_df = pd.read_csv(f'./processed/{SUBREDDIT}_structure.csv', index_col=0)
+n_feat = torch.from_numpy(np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy')).to(device)
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -304,7 +293,7 @@ if 0 < SEQ_SLICING:
 elif SEQ_SLICING < 0:
     MAX_SEQ = int(-SEQ_SLICING)
 
-#graph labeling
+# Graph labeling
 graph_label_map = {}
 for k in set(g_num):
     temp_ts_l = ts_l[g_num == k]
@@ -318,7 +307,7 @@ for k in set(g_num):
     else:
         graph_label_map[k] = 0
 
-#class balancing in train data
+# Class balancing in train data
 if CLASS_BALANCING == 'BALANCED':
     neg_k = np.array([])
     pos_k = np.array([])
@@ -335,10 +324,9 @@ if CLASS_BALANCING == 'BALANCED':
     else:
         major, minor = neg_k, pos_k
 
-early_stopper = EarlyStopMonitor(max_round)
 num_instance = len(train_src_l)
-logger.debug('num of training instances: {}'.format(num_instance))
-logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
+logger.debug(f'num of training instances: {num_instance}')
+logger.debug(f'num of graphs per epoch: {len(set(train_g_num_l))}')
 logger.info('Start training Graph classification task')
 
 if PRED_METHOD == 'LSTM':
@@ -354,6 +342,8 @@ lr_model = lr_model.to(device)
 lr_optimizer = torch.optim.Adam(lr_model.parameters(), lr=args.lr)
 lr_criterion = torch.nn.BCELoss()
 lr_criterion_eval = torch.nn.BCELoss()
+
+early_stopper = EarlyStopMonitor(max_round)
 
 def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
 
@@ -398,7 +388,8 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
 
     # save performance
     if data_type:
-        new = [{'SUBREDDIT': DATA,
+        new = [{'SUBREDDIT' : SUBREDDIT,
+                'WORD_EMBEDDING' : WORD_EMBEDDING,
                 'EMBEDDING_METHOD': EMBEDDING_METHOD,
                 'TGAT_TIME_CUT': tgat_time_cut,
                 'PRED_TIME_CUT': time_cut,
@@ -439,11 +430,11 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
                            'pred_prob': pred_prob,
                            'pred_label': pred_label})
 
-        df.to_csv('./saved_data/{}.csv'.format(MODEL_NUM))
+        df.to_csv(f'./saved_data/{MODEL_NUM}.csv')
 
     return acc, auc_roc, AP, recall, F1, loss / num_instance
 
-for epoch in tqdm(range(args.n_epoch)):
+for epoch in tqdm(range(NUM_EPOCH)):
     lr_model = lr_model.train()
 
     # random choice
@@ -469,32 +460,30 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_optimizer.step()
 
     val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_g_num_l, lr_model, 0)
-    logger.info('epoch: {}:'.format(epoch))
-    logger.info('val loss: {}'.format(val_loss))
-    logger.info('val acc: {}'.format(val_acc))
-    logger.info('val auc: {}'.format(val_auc))
-    logger.info('val ap: {}'.format(val_AP))
-    logger.info('val f1: {}'.format(val_F1))
+    logger.info(f'epoch: {epoch}:')
+    logger.info(f'val loss: {val_loss}')
+    logger.info(f'val acc: {val_acc}')
+    logger.info(f'val auc: {val_auc}')
+    logger.info(f'val ap: {val_AP}')
+    logger.info(f'val f1: {val_F1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
+        logger.info(f'No improvment over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)
         lr_model.load_state_dict(torch.load(best_model_path))
         logger.info(f'Loaded the best model at epoch {best_epoch} for inference')
-        lr_model.eval()
         os.remove(best_model_path)
-        logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, best_epoch))
         break
     else:
         if early_stopper.is_best:
             torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
-            logger.info('Saved {}-PREDICTED-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
+            logger.info(f'Saved {MODEL_NUM}-PREDICT-{early_stopper.best_epoch}.pth')
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
-                    logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
+                    logger.info(f'Deleted {MODEL_NUM}-PREDICT-{i}.pth')
                 except:
                     continue
 
