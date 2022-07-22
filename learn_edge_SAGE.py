@@ -76,10 +76,6 @@ class MeanAggregator(nn.Module):
 
 
 class Encoder(nn.Module):
-    """
-    Encodes a node's using 'convolutional' GraphSage approach
-    """
-
     def __init__(self, features, feature_dim,
                  embed_dim, adj_lists, aggregator,
                  num_sample=10,
@@ -148,10 +144,11 @@ class SupervisedGraphSage(nn.Module):
         return self.xent(scores, labels.squeeze()).to(device)
 
 
-def load_data(DATA, time_cut, train_time, TRAINING_METHOD):
+def load_data():
+
     print('Loading Data')
-    g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
-    n_feat = np.load('./processed/{}_node_feat.npy'.format(DATA))
+    g_df = pd.read_csv(f'./processed/{SUBREDDIT}_structure.csv', index_col=0)
+    n_feat = np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy')
 
     g_num = g_df.g_num.values
     g_ts = g_df.g_ts.values
@@ -160,6 +157,7 @@ def load_data(DATA, time_cut, train_time, TRAINING_METHOD):
     ts_l = g_df.ts.values
     label_l = g_df.label.values
 
+    train_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
     test_time = np.quantile(g_ts[(g_ts > train_time)], 0.5)
 
     train_flag = (g_ts < train_time)
@@ -252,20 +250,20 @@ np.random.seed(222)
 random.seed(222)
 def run():
     NUM_EPOCH = 1000
-    max_round = 10
+
     feat_data, adj_lists, \
     train_src_l, train_label_l, \
     test_src_l, test_label_l, \
-    val_src_l, val_label_l = load_data(DATA, time_cut, train_time, TRAINING_METHOD)
+    val_src_l, val_label_l = load_data()
     print('Data Loaded')
     features = nn.Embedding(feat_data.shape[0], feat_data.shape[1])
     features.weight = nn.Parameter(torch.FloatTensor(feat_data), requires_grad=False)
     features.cuda()
 
     agg1 = MeanAggregator(features, cuda=True)
-    enc1 = Encoder(features, 768, 768, adj_lists, agg1, gcn=False, cuda=True)
+    enc1 = Encoder(features, feat_data.shape[1], feat_data.shape[1], adj_lists, agg1, gcn=False, cuda=True)
     agg2 = MeanAggregator(lambda nodes: enc1(nodes).t(), cuda=True)
-    enc2 = Encoder(lambda nodes: enc1(nodes).t(), enc1.embed_dim, 768, adj_lists, agg2,
+    enc2 = Encoder(lambda nodes: enc1(nodes).t(), enc1.embed_dim, feat_data.shape[1], adj_lists, agg2,
                    base_model=enc1, gcn=False, cuda=True)
     enc1.num_samples = 5
     enc2.num_samples = 5
@@ -277,14 +275,15 @@ def run():
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=0.0005)
 
     num_instance = len(train_src_l)
-    print('num_instance :', num_instance)
+    print(f'num_instance : {num_instance}')
     num_batch = math.ceil(num_instance / BATCH_SIZE)
 
     for epoch in range(NUM_EPOCH):
         m_loss = []
+
         #random shuffle
         train_src_l, train_label_l = random_shuffle(num_instance, train_src_l, train_label_l)
-        print('Start {} epoch'.format(epoch))
+        print(f'Start {epoch} epoch')
         for k in range(num_batch):
             s_idx = k * BATCH_SIZE
             e_idx = min(num_instance - 1, s_idx + BATCH_SIZE)
@@ -304,24 +303,22 @@ def run():
         print("Validation F1:", val_f1)
 
         if early_stopper.early_stop_check(val_auc):
-            print('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
+            print(f'No improvment over {early_stopper.max_round} epochs, stop training')
             best_epoch = early_stopper.best_epoch
             print(f'Loading the best model at epoch {best_epoch}')
             best_model_path = get_checkpoint_path(best_epoch)
             graphsage.load_state_dict(torch.load(best_model_path))
             print(f'Loaded the best model at epoch {best_epoch} for inference')
-            graphsage.eval()
             os.remove(best_model_path)
-            print('Deleted {}-SAGE_MEAN-{}.pth'.format(MODEL_NUM, best_epoch))
             break
         else:
             if early_stopper.is_best:
                 torch.save(graphsage.state_dict(), get_checkpoint_path(epoch))
-                print('Saved {}-SAGE_MEAN-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
+                print(f'Saved SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{early_stopper.best_epoch}.pth')
                 for i in range(epoch):
                     try:
                         os.remove(get_checkpoint_path(i))
-                        print('Deleted {}-SAGE_MEAN-{}.pth'.format(MODEL_NUM, i))
+                        print(f'Deleted SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{i}.pth')
                     except:
                         continue
 
@@ -332,20 +329,46 @@ def run():
     torch.save(graphsage.state_dict(), MODEL_SAVE_PATH)
     print('SAGE_MEAN models saved')
 
-DATA = 'iama'
-train_time = 3888000
-time_cut = 309000
+
+'''
+=====CONFIGS=====
+
+        SUBREDDIT : 'iama'
+                    'showerthoughts'
+
+        TRAINING_METHOD = 'SELECTIVE'
+                          'FULL'
+
+        WORD_EMBEDDING : 'bert-base-uncased'  
+                         'roberta-base'
+                         'deberta-base'
+                         'fasttext'
+                         'glove' 
+                         'tf-idf' - not supported yet
+
+        TIME_CUT : int
+
+        max_round : int
+
+=====CONFIGS=====
+'''
+
+SUBREDDIT = 'iama'
 TRAINING_METHOD = 'SELECTIVE'
-MODEL_NUM = '000'
+WORD_EMBEDDING = 'bert-base-uncased'
+time_cut = 309000
+max_round = 10
 BATCH_SIZE = 200
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MODEL_SAVE_PATH = f'./saved_models/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/{MODEL_NUM}-SAGE_MEAN-{epoch}.pth'
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-SAGE_MEAN.pth'
+    epoch: f'./saved_checkpoints/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
+
 if __name__ == "__main__":
-    print('DATA :', DATA)
-    print('time_cut :', time_cut)
-    print('Training Method :', TRAINING_METHOD)
-    print('MODEL_NUM : ', MODEL_NUM)
+    print(f'SUBREDDIT : {SUBREDDIT}')
+    print(f'TIME_CUT :{time_cut}')
+    print(f'TRAINING_METHOD : {TRAINING_METHOD}')
+    print(f'WORD_EMBEDDING : {WORD_EMBEDDING}')
     run()
 
