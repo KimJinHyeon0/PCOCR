@@ -4,11 +4,11 @@ import pandas as pd
 import time
 import os
 
-from torchtext.data import Field
 from torchtext.vocab import GloVe, FastText
+from torchtext.data.utils import get_tokenizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
-from transformers import BertTokenizer, BertModel
+from transformers import BertModel, BertTokenizer
 from transformers import RobertaModel, RobertaTokenizer
 from transformers import DebertaModel, DebertaTokenizer
 
@@ -48,18 +48,18 @@ class get_word_embedding():
         elif self.PRETRAINED_MODEL == 'tf-idf':
             self.DEFAULT_TOKENIZER = True
 
-        else:
+
+        elif self.PRETRAINED_MODEL != 'np.ones' and self.PRETRAINED_MODEL != 'np.zeros':
             raise ValueError(
-                "Could not find pretrained model \nAvailable : bert-base-uncased / fasttext.en.300d / glove.840B.300d / tf-idf / roberta_base / deberta_large")
+                "Could not find pretrained model \nAvailable : bert-base-uncased / fasttext.en.300d / glove.840B.300d / tf-idf / roberta_base / deberta_large / np.ones / np.zeros")
 
         if self.DEFAULT_TOKENIZER:
-            self.tokenizer = Field(tokenize='basic_english', lower=True)
             self.OUTPUT_DIMENSION = 300
+            self.tokenizer = get_tokenizer("basic_english")
         else:
             self.OUTPUT_DIMENSION = 768
 
         self.FEATURE = torch.zeros((self.CORPUS.index.max() + 1, self.OUTPUT_DIMENSION), device=cuda)
-
 
     def text_cleaning(self, text):
         from bs4 import BeautifulSoup
@@ -92,17 +92,21 @@ class get_word_embedding():
         self.CORPUS = self.CORPUS['raw_text'].apply(lambda x: self.text_cleaning(x))
         print('Done')
 
-    def save(self):
+    def save(self, ONES):
         OUT_NODE_FEAT = f'./processed/{self.SUBREDDIT}_node_feat_{self.PRETRAINED_MODEL}.npy'
         OUT_EDGE_FEAT = f'./processed/{self.SUBREDDIT}_edge_feat_{self.FEATURE.shape[1]}.npy'
 
-        self.FEATURE = self.FEATURE.cpu()
-        np.save(OUT_NODE_FEAT, self.FEATURE)
+        if ONES:
+            self.FEATURE = torch.ones((self.CORPUS.index.max() + 1, self.OUTPUT_DIMENSION))
+
+        np.save(OUT_NODE_FEAT, self.FEATURE.cpu())
         print(f'\nSaved {self.SUBREDDIT}_node_feat_{self.PRETRAINED_MODEL}.npy')
 
         if not os.path.isfile(OUT_EDGE_FEAT):
             np.save(OUT_EDGE_FEAT, np.ones_like(self.FEATURE))
             print(f'Saved {self.SUBREDDIT}_edge_feat_{self.FEATURE.shape[1]}.npy')
+
+        print('Done')
 
     def run(self):
         num_instance = len(self.CORPUS)
@@ -110,18 +114,31 @@ class get_word_embedding():
         print(f'PRETRAINED_MODEL = {self.PRETRAINED_MODEL}')
         print(f'NUM_INSTANCE = {num_instance}')
 
+        if self.PRETRAINED_MODEL == 'np.ones':
+            self.save(True)
+            exit()
+
         if self.TEXT_CLEANING:
             self.run_text_cleaning()
 
-        if not self.DEFAULT_TOKENIZER:
+        if self.DEFAULT_TOKENIZER:
+            self.CORPUS = self.CORPUS.apply(lambda x: self.tokenizer(x))
+        else:
             self.model.to(cuda)
+
         start = time.time()
         for i, (index, text) in enumerate(self.CORPUS.items()):
             if i % 1000 == 0:
                 print(f'{self.PRETRAINED_MODEL} | {self.SUBREDDIT} | {i}/{num_instance} ... {round(i*100 / num_instance, 3)}% | avg_time = {round((time.time() - start) / 1000, 3)}s')
                 start = time.time()
 
-            if not self.DEFAULT_TOKENIZER:
+            if self.DEFAULT_TOKENIZER:
+                text = [' '] if not text else text
+                output = self.model.get_vecs_by_tokens(text)
+                embedding = torch.mean(output, dim=0)
+                self.FEATURE[index] = embedding
+
+            else:
                 tokenized = self.tokenizer(text, return_tensors="pt", truncation=True)
                 input_ids = tokenized['input_ids'].cuda()
                 attention_mask = tokenized['attention_mask'].cuda()
@@ -137,13 +154,8 @@ class get_word_embedding():
                 embedding = torch.squeeze(torch.mean(last_hidden_states, dim=1))
                 self.FEATURE[index] = embedding
 
-            else:
-                output = self.model.get_vecs_by_tokens(text)
-                embedding = torch.mean(output, dim=0)
-                self.FEATURE[index] = embedding
-
         if self.SAVE:
-            self.save()
+            self.save(False)
 
 '''
 =====CONFIGS=====
@@ -157,6 +169,7 @@ class get_word_embedding():
                            'fasttext'
                            'glove' 
                            'tf-idf' - not supported yet
+                           'np.ones'
         
         text_cleaning : bool
         
@@ -166,10 +179,10 @@ class get_word_embedding():
 '''
 
 CONFIGS = {
-    'subreddit' : 'iama',
-    'pretrained_model' : 'glove',
-    'text_cleaning' : True,
-    'save' : True
+    'subreddit': 'iama',
+    'pretrained_model': 'glove',
+    'text_cleaning': True,
+    'save': True
 }
 
 model = get_word_embedding(CONFIGS)
