@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pandas as pd
 import time
+import os
 
 from torchtext.data import Field
 from torchtext.vocab import GloVe, FastText
@@ -93,14 +94,15 @@ class get_word_embedding():
 
     def save(self):
         OUT_NODE_FEAT = f'./processed/{self.SUBREDDIT}_node_feat_{self.PRETRAINED_MODEL}.npy'
-        OUT_EDGE_FEAT = f'./processed/{self.SUBREDDIT}_edge_feat_{self.PRETRAINED_MODEL}.npy'
+        OUT_EDGE_FEAT = f'./processed/{self.SUBREDDIT}_edge_feat_{self.FEATURE.shape[1]}.npy'
 
         self.FEATURE = self.FEATURE.cpu()
         np.save(OUT_NODE_FEAT, self.FEATURE)
         print(f'\nSaved {self.SUBREDDIT}_node_feat_{self.PRETRAINED_MODEL}.npy')
 
-        np.save(OUT_EDGE_FEAT, np.ones_like(self.FEATURE))
-        print(f'Saved {self.SUBREDDIT}_edge_feat_{self.PRETRAINED_MODEL}.npy')
+        if not os.path.isfile(OUT_EDGE_FEAT):
+            np.save(OUT_EDGE_FEAT, np.ones_like(self.FEATURE))
+            print(f'Saved {self.SUBREDDIT}_edge_feat_{self.FEATURE.shape[1]}.npy')
 
     def run(self):
         num_instance = len(self.CORPUS)
