@@ -122,37 +122,49 @@ class get_word_embedding():
             self.run_text_cleaning()
 
         if self.DEFAULT_TOKENIZER:
-            self.CORPUS = self.CORPUS.apply(lambda x: self.tokenizer(x))
+            if self.PRETRAINED_MODEL == 'tf-idf':
+                vectorizer = TfidfVectorizer(tokenizer=self.tokenizer, max_features=self.OUTPUT_DIMENSION)
+            else:
+                self.CORPUS = self.CORPUS.apply(lambda x: self.tokenizer(x))
         else:
             self.model.to(cuda)
 
         start = time.time()
-        for i, (index, text) in enumerate(self.CORPUS.items()):
-            if i % 1000 == 0:
-                print(f'{self.PRETRAINED_MODEL} | {self.SUBREDDIT} | {i}/{num_instance} ... {round(i*100 / num_instance, 3)}% | avg_time = {round((time.time() - start) / 1000, 3)}s')
-                start = time.time()
 
-            if self.DEFAULT_TOKENIZER:
-                text = [' '] if not text else text
-                output = self.model.get_vecs_by_tokens(text)
-                embedding = torch.mean(output, dim=0)
+        if self.PRETRAINED_MODEL == 'tf-idf':
+            output = torch.cuda.FloatTensor(vectorizer.fit_transform(self.CORPUS).toarray())
+            assert output.shape[0] == len(self.CORPUS)
+
+            for index, embedding in zip(self.CORPUS.index, output):
                 self.FEATURE[index] = embedding
 
-            else:
-                tokenized = self.tokenizer(text, return_tensors="pt", truncation=True)
-                input_ids = tokenized['input_ids'].cuda()
-                attention_mask = tokenized['attention_mask'].cuda()
-                if self.PRETRAINED_MODEL == 'roberta-base':
-                    token_type_ids = torch.zeros_like(input_ids, device=cuda)
+        else:
+            for i, (index, text) in enumerate(self.CORPUS.items()):
+                if i % 1000 == 0:
+                    print(f'{self.PRETRAINED_MODEL} | {self.SUBREDDIT} | {i}/{num_instance} ... {round(i*100 / num_instance, 3)}% | avg_time = {round((time.time() - start) / 1000, 3)}s')
+                    start = time.time()
+
+                if self.DEFAULT_TOKENIZER:
+                    text = [' '] if not text else text
+                    output = self.model.get_vecs_by_tokens(text)
+                    embedding = torch.mean(output, dim=0)
+                    self.FEATURE[index] = embedding
+
                 else:
-                    token_type_ids = tokenized['token_type_ids'].cuda()
+                    tokenized = self.tokenizer(text, return_tensors="pt", truncation=True)
+                    input_ids = tokenized['input_ids'].cuda()
+                    attention_mask = tokenized['attention_mask'].cuda()
+                    if self.PRETRAINED_MODEL == 'roberta-base':
+                        token_type_ids = torch.zeros_like(input_ids, device=cuda)
+                    else:
+                        token_type_ids = tokenized['token_type_ids'].cuda()
 
-                with torch.no_grad():
-                    outputs = self.model(input_ids, attention_mask, token_type_ids)
+                    with torch.no_grad():
+                        outputs = self.model(input_ids, attention_mask, token_type_ids)
 
-                last_hidden_states = outputs.last_hidden_state
-                embedding = torch.squeeze(torch.mean(last_hidden_states, dim=1))
-                self.FEATURE[index] = embedding
+                    last_hidden_states = outputs.last_hidden_state
+                    embedding = torch.squeeze(torch.mean(last_hidden_states, dim=1))
+                    self.FEATURE[index] = embedding
 
         if self.SAVE:
             self.save(False)
@@ -168,7 +180,7 @@ class get_word_embedding():
                            'deberta-base'
                            'fasttext'
                            'glove' 
-                           'tf-idf' - not supported yet
+                           'tf-idf'
                            'np.ones'
         
         text_cleaning : bool
