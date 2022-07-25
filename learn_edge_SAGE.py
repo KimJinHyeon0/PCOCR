@@ -363,7 +363,7 @@ max_round = 10
 BATCH_SIZE = 200
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_SAVE_PATH = f'./saved_models/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
+MODEL_SAVE_PATH = f'./saved_models/pretrained_models/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
 get_checkpoint_path = lambda \
     epoch: f'./saved_checkpoints/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
 

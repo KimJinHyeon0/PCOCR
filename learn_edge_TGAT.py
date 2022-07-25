@@ -90,7 +90,7 @@ WORD_EMBEDDING = 'bert-base-uncased'
 TIME_CUT = 309000
 max_round = 10
 
-MODEL_SAVE_PATH = f'./saved_models/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
+MODEL_SAVE_PATH = f'./saved_models/pretrained_models/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
 get_checkpoint_path = lambda \
     epoch: f'./saved_checkpoints/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
 

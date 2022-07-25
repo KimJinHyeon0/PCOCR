@@ -244,7 +244,7 @@ if PRED_METHOD == 'MEAN':
 MODEL_NUM = str(MODEL_NUM).zfill(3)
 logger.info(f'MODEL_NUM : {MODEL_NUM}')
 
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
+MODEL_SAVE_PATH = f'./saved_models/predict_models/{MODEL_NUM}-PREDICT.pth'
 get_checkpoint_path = lambda \
         epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
 

@@ -246,7 +246,7 @@ if PRED_METHOD == 'MEAN':
 MODEL_NUM = str(MODEL_NUM).zfill(3)
 logger.info(f'MODEL_NUM : {MODEL_NUM}')
 
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
+MODEL_SAVE_PATH = f'./saved_models/predict_models/{MODEL_NUM}-PREDICT.pth'
 get_checkpoint_path = lambda \
         epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
 
@@ -370,7 +370,7 @@ pretrained_model = f'SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
 logger.info(f'SAGE Model : {pretrained_model}')
 logger.info(spec[:])
 
-model_path = f'./saved_models/{pretrained_model}'
+model_path = f'./saved_models/pretrained_models/{pretrained_model}'
 graphsage.load_state_dict(torch.load(model_path))
 graphsage.eval()
 logger.info(f'SAGE models loaded : {pretrained_model}')
