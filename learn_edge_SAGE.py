@@ -179,7 +179,7 @@ def load_data():
     test_label_l = label_l[test_flag]
 
     if TRAINING_METHOD == 'SELECTIVE':
-        time_cut_flag = (train_ts_l < time_cut)
+        time_cut_flag = (train_ts_l < TIME_CUT)
 
         train_g_num = train_g_num[time_cut_flag]
         train_src_l = train_src_l[time_cut_flag]
@@ -248,6 +248,7 @@ def eval_one_epoch(graphsage, src_l, label_l):
 
 np.random.seed(222)
 random.seed(222)
+
 def run():
     NUM_EPOCH = 1000
 
@@ -284,6 +285,7 @@ def run():
         #random shuffle
         train_src_l, train_label_l = random_shuffle(num_instance, train_src_l, train_label_l)
         print(f'Start {epoch} epoch')
+
         for k in range(num_batch):
             s_idx = k * BATCH_SIZE
             e_idx = min(num_instance - 1, s_idx + BATCH_SIZE)
@@ -356,7 +358,7 @@ def run():
 SUBREDDIT = 'iama'
 TRAINING_METHOD = 'SELECTIVE'
 WORD_EMBEDDING = 'bert-base-uncased'
-time_cut = 309000
+TIME_CUT = 309000
 max_round = 10
 BATCH_SIZE = 200
 
@@ -367,7 +369,7 @@ get_checkpoint_path = lambda \
 
 if __name__ == "__main__":
     print(f'SUBREDDIT : {SUBREDDIT}')
-    print(f'TIME_CUT :{time_cut}')
+    print(f'TIME_CUT :{TIME_CUT}')
     print(f'TRAINING_METHOD : {TRAINING_METHOD}')
     print(f'WORD_EMBEDDING : {WORD_EMBEDDING}')
     run()
