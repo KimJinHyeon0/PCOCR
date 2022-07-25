@@ -346,7 +346,7 @@ def run():
                          'deberta-base'
                          'fasttext'
                          'glove' 
-                         'tf-idf' - not supported yet
+                         'tf-idf'
 
         TIME_CUT : int
 
