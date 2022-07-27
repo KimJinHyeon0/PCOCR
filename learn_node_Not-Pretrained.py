@@ -178,7 +178,7 @@ except:
     parser.print_help()
     sys.exit(0)
 
-BATCH_SIZE = args.bs
+BATCH_SIZE = 200
 NUM_NEIGHBORS = args.n_degree
 NUM_NEG = 1
 NUM_EPOCH = args.n_epoch
@@ -243,10 +243,10 @@ if PRED_METHOD == 'MEAN':
 
 MODEL_NUM = str(MODEL_NUM).zfill(3)
 logger.info(f'MODEL_NUM : {MODEL_NUM}')
-
-MODEL_SAVE_PATH = f'./saved_models/predict_models/{MODEL_NUM}-PREDICT.pth'
+MODEL_NAME = f'{MODEL_NUM}-PREDICT'
+MODEL_SAVE_PATH = f'./saved_models/predict_models/{MODEL_NAME}.pth'
 get_checkpoint_path = lambda \
-        epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
+        epoch: f'./saved_checkpoints/{MODEL_NAME}-{epoch}.pth'
 
 if EMBEDDING_METHOD != 'Not-Pretrained':
     logger.info('Only for Not-Pretrained Model')
@@ -263,8 +263,8 @@ src_l = g_df.u.values
 dst_l = g_df.i.values
 ts_l = g_df.ts.values
 
-train_time = 3888000
-test_time = np.quantile(np.unique(g_ts[(g_ts > train_time)]), 0.5)
+train_time = 3283200  # '2018-02-08 00:00:00' - '2018-01-01 00:00:00'
+test_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 
 time_cut_flag = (ts_l < time_cut)
 train_flag = (g_ts < train_time)
@@ -479,11 +479,11 @@ for epoch in tqdm(range(NUM_EPOCH)):
     else:
         if early_stopper.is_best:
             torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
-            logger.info(f'Saved {MODEL_NUM}-PREDICT-{early_stopper.best_epoch}.pth')
+            logger.info(f'Saved {MODEL_NAME}-{early_stopper.best_epoch}.pth')
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
-                    logger.info(f'Deleted {MODEL_NUM}-PREDICT-{i}.pth')
+                    logger.info(f'Deleted {MODEL_NAME}-{i}.pth')
                 except:
                     continue
 
