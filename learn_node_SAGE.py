@@ -512,7 +512,7 @@ for epoch in tqdm(range(NUM_EPOCH)):
         lr_optimizer.step()
 
     val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_g_num_l, lr_model, 0)
-    logger.info(f'epoch: {epoch}:')
+    logger.info(f'epoch: {epoch}')
     logger.info(f'val loss: {val_loss}')
     logger.info(f'val acc: {val_acc}')
     logger.info(f'val auc: {val_auc}')
@@ -520,7 +520,7 @@ for epoch in tqdm(range(NUM_EPOCH)):
     logger.info(f'val f1: {val_F1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info(f'No improvment over {early_stopper.max_round} epochs, stop training')
+        logger.info(f'No improvement over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)

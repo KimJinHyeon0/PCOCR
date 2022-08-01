@@ -468,7 +468,7 @@ for epoch in tqdm(range(NUM_EPOCH)):
     logger.info(f'val f1: {val_F1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info(f'No improvment over {early_stopper.max_round} epochs, stop training')
+        logger.info(f'No improvement over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)
