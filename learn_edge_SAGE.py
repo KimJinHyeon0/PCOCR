@@ -12,12 +12,6 @@ from collections import defaultdict
 import math
 from utils import EarlyStopMonitor
 
-"""
-Simple supervised GraphSAGE model as well as examples running the model
-on the Cora and Pubmed datasets.
-"""
-
-
 class MeanAggregator(nn.Module):
     """
     Aggregates a node's embeddings using mean of neighbors' embeddings
@@ -157,12 +151,12 @@ def load_data():
     ts_l = g_df.ts.values
     label_l = g_df.label.values
 
-    train_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
-    test_time = np.quantile(g_ts[(g_ts > train_time)], 0.5)
+    train_time = 3283200  # '2018-02-08 00:00:00' - '2018-01-01 00:00:00'
+    test_time = 3888000   # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 
     train_flag = (g_ts < train_time)
-    test_flag = (g_ts >= train_time) & (g_ts < test_time)
-    valid_flag = (g_ts >= test_time)
+    valid_flag = (g_ts >= train_time) & (g_ts < test_time)
+    test_flag = (g_ts >= test_time)
 
     train_g_num = g_num[train_flag]
     train_src_l = src_l[train_flag]
@@ -273,7 +267,7 @@ def run():
     graphsage.to(device)
     early_stopper = EarlyStopMonitor(max_round)
 
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=0.0005)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, graphsage.parameters()), lr=LEARNING_RATE)
 
     num_instance = len(train_src_l)
     print(f'num_instance : {num_instance}')
@@ -305,7 +299,7 @@ def run():
         print("Validation F1:", val_f1)
 
         if early_stopper.early_stop_check(val_auc):
-            print(f'No improvment over {early_stopper.max_round} epochs, stop training')
+            print(f'No improvement over {early_stopper.max_round} epochs, stop training')
             best_epoch = early_stopper.best_epoch
             print(f'Loading the best model at epoch {best_epoch}')
             best_model_path = get_checkpoint_path(best_epoch)
@@ -316,11 +310,11 @@ def run():
         else:
             if early_stopper.is_best:
                 torch.save(graphsage.state_dict(), get_checkpoint_path(epoch))
-                print(f'Saved SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{early_stopper.best_epoch}.pth')
+                print(f'Saved {MODEL_NAME}-{early_stopper.best_epoch}.pth')
                 for i in range(epoch):
                     try:
                         os.remove(get_checkpoint_path(i))
-                        print(f'Deleted SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{i}.pth')
+                        print(f'Deleted {MODEL_NAME}-{i}.pth')
                     except:
                         continue
 
@@ -351,23 +345,35 @@ def run():
         TIME_CUT : int
 
         max_round : int
+        
+        BATCH_SIZE :" (200, 128, 64)
+        
+        LEARNING_RATE : (3e-4, 1e-5, 1e-4)
 
 =====CONFIGS=====
 '''
 
-SUBREDDIT = 'iama'
+SUBREDDIT = ['iama', 'showerthoughts']
 TRAINING_METHOD = 'SELECTIVE'
-WORD_EMBEDDING = 'bert-base-uncased'
+WORD_EMBEDDING = ['bert-base-uncased',
+                  'roberta-base',
+                  'deberta-base',
+                  'fasttext',
+                  'glove',
+                  'tf-idf']
 TIME_CUT = 309000
 max_round = 10
 BATCH_SIZE = 200
+LEARNING_RATE = 3e-4
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-MODEL_SAVE_PATH = f'./saved_models/pretrained_models/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
+MODEL_NAME = f'SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{BATCH_SIZE}-{LEARNING_RATE}'
+MODEL_SAVE_PATH = f'./saved_models/pretrained_models/{MODEL_NAME}.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/SAGE-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
+    epoch: f'./saved_checkpoints/{MODEL_NAME}-{epoch}.pth'
 
 if __name__ == "__main__":
+
     print(f'SUBREDDIT : {SUBREDDIT}')
     print(f'TIME_CUT :{TIME_CUT}')
     print(f'TRAINING_METHOD : {TRAINING_METHOD}')

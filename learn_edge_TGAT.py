@@ -44,7 +44,6 @@ except:
     parser.print_help()
     sys.exit(0)
 
-BATCH_SIZE = args.bs
 NUM_NEIGHBORS = args.n_degree
 NUM_NEG = 1
 NUM_EPOCH = args.n_epoch
@@ -58,7 +57,6 @@ AGG_METHOD = args.agg_method
 ATTN_MODE = args.attn_mode
 SEQ_LEN = NUM_NEIGHBORS
 NUM_LAYER = args.n_layer
-LEARNING_RATE = args.lr
 NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 
@@ -89,10 +87,13 @@ TRAINING_METHOD = 'SELECTIVE'
 WORD_EMBEDDING = 'bert-base-uncased'
 TIME_CUT = 309000
 max_round = 10
+BATCH_SIZE = 200
+LEARNING_RATE = 3e-4
 
-MODEL_SAVE_PATH = f'./saved_models/pretrained_models/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}.pth'
+MODEL_NAME = f'TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{BATCH_SIZE}-{LEARNING_RATE}'
+MODEL_SAVE_PATH = f'./saved_models/pretrained_models/{MODEL_NAME}.pth'
 get_checkpoint_path = lambda \
-    epoch: f'./saved_checkpoints/TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{epoch}.pth'
+    epoch: f'./saved_checkpoints/{MODEL_NAME}-{epoch}.pth'
 
 ### set up logger
 logging.basicConfig(level=logging.INFO)
@@ -159,12 +160,12 @@ ts_l = g_df.ts.values
 label_l = g_df.label.values
 e_idx_l = g_df.idx.values
 
-train_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
-test_time = np.quantile(g_ts[(g_ts > train_time)], 0.5)
+train_time = 3283200  # '2018-02-08 00:00:00' - '2018-01-01 00:00:00'
+test_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 
 train_flag = (g_ts < train_time)
-test_flag = (g_ts >= train_time) & (g_ts < test_time)
-valid_flag = (g_ts >= test_time)
+valid_flag = (g_ts >= train_time) & (g_ts < test_time)
+test_flag = (g_ts >= test_time)
 
 train_g_num = g_num[train_flag]
 train_src_l = src_l[train_flag]
@@ -328,7 +329,7 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     logger.info(f'train f1: {np.mean(f1)}, val f1: {val_f1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info(f'No improvment over {early_stopper.max_round} epochs, stop training')
+        logger.info(f'No improvement over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)
@@ -340,11 +341,11 @@ for epoch in range(NUM_EPOCH):  # NUM_EPOCH = 50
     else:
         if early_stopper.is_best:
             torch.save(tgan.state_dict(), get_checkpoint_path(epoch))
-            logger.info(f'Saved TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{early_stopper.best_epoch}.pth')
+            logger.info(f'Saved {MODEL_NAME}-{early_stopper.best_epoch}.pth')
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
-                    logger.info(f'Deleted TGAT-{SUBREDDIT}-{WORD_EMBEDDING}-{TRAINING_METHOD}-{i}.pth')
+                    logger.info(f'Deleted {MODEL_NAME}-{i}.pth')
                 except:
                     continue
 
