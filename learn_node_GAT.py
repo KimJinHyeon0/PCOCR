@@ -1,11 +1,10 @@
-"""Unified interface to all dynamic graph model experiments"""
-
 import os
 import logging
 import time
 import sys
 import random
 import argparse
+import math
 
 from tqdm import tqdm
 import torch
@@ -14,7 +13,9 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score, f1_score, recall_score
 from collections import Counter
 
+import dgl
 from utils import EarlyStopMonitor
+from learn_edge_GAT import GAT
 
 class MEAN(torch.nn.Module):
     def __init__(self, input_dim, post_concat, NUM_FC, fc_dim, drop=0.3):
@@ -38,7 +39,8 @@ class MEAN(torch.nn.Module):
     def forward(self, x, k):
         if self.post_concat:
             k = k.astype(np.int64)
-            post_k = n_feat[k].to(device)
+            # post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = n_feat[k]
             x = x.mean(dim=0)
             x = torch.cat((x, post_k), axis=0)
             x = self.dropout(x)
@@ -134,7 +136,8 @@ class LSTM(torch.nn.Module):
 
         if self.post_concat:
             k = k.astype(np.int64)
-            post_k = n_feat[k].to(device)
+            # post_k = torch.from_numpy(n_feat[k]).to(device)
+            post_k = n_feat[k]
             h_out = torch.unsqueeze(torch.cat((h_out[0], post_k), axis=0), 0)
 
         if self.NUM_FC == 2:
@@ -171,7 +174,6 @@ parser.add_argument('--time_dim', type=int, default=None, help='Dimentions of th
 parser.add_argument('--agg_method', type=str, choices=['attn', 'lstm', 'mean'], help='local aggregation method', default='attn')
 parser.add_argument('--attn_mode', type=str, choices=['prod', 'map'], default='prod')
 parser.add_argument('--time', type=str, choices=['time', 'pos', 'empty'], help='how to use time information', default='time')
-
 parser.add_argument('--new_node', action='store_true', help='model new node')
 parser.add_argument('--uniform', action='store_true', help='take uniform sampling from temporal neighbors')
 
@@ -181,7 +183,7 @@ except:
     parser.print_help()
     sys.exit(0)
 
-BATCH_SIZE = args.bs
+BATCH_SIZE = 200
 NUM_NEIGHBORS = args.n_degree
 NUM_NEG = 1
 NUM_EPOCH = args.n_epoch
@@ -201,10 +203,25 @@ NODE_DIM = args.node_dim
 TIME_DIM = args.time_dim
 max_round = 10
 
-### Model initialize
+### set up logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+fh = logging.FileHandler(f'log/{str(time.time())}.log')
+fh.setLevel(logging.DEBUG)
+ch = logging.StreamHandler()
+ch.setLevel(logging.WARN)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+ch.setFormatter(formatter)
+logger.addHandler(fh)
+logger.addHandler(ch)
+logger.info(args)
+
+# GPU configuration
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#############################
+# load hyperparameters of latest implementation
 test_list = pd.read_csv('test_list.csv', index_col=0)
 
 MODEL_PERFORMANCE_PATH = f'./saved_models/model_perfomance_eval.csv'
@@ -216,82 +233,72 @@ except:
 
 spec = test_list.loc[MODEL_NUM]
 
-DATA, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
+SUBREDDIT, WORD_EMBEDDING, EMBEDDING_METHOD, tgat_time_cut, time_cut, PRED_METHOD, sampling_method, post_concat, bidirectional, \
 lstm_layer, NUM_FC, fc_dim, hidden_dim, SEQ_SLICING, TRAINING_METHOD, CLASS_BALANCING = spec[:]
 bidirectional = bool(bidirectional)
 post_concat = bool(post_concat)
 hidden_dim = int(hidden_dim)
 fc_dim = int(fc_dim)
-
 output_dim = 1
 
-if PRED_METHOD != 'LSTM' and PRED_METHOD != 'ATTENTION':
+if PRED_METHOD == 'MEAN':
     n_layer = None
     bidirectional = False
     sampling_method = None
 
 MODEL_NUM = str(MODEL_NUM).zfill(3)
-
-print('MODEL_NUM :', MODEL_NUM)
-print(spec[:])
-############################
-
-MODEL_SAVE_PATH = f'./saved_models/{MODEL_NUM}-PREDICT.pth'
+logger.info(f'MODEL_NUM : {MODEL_NUM}')
+MODEL_NAME = f'{MODEL_NUM}-PREDICT'
+MODEL_SAVE_PATH = f'./saved_models/predict_models/{MODEL_NAME}.pth'
 get_checkpoint_path = lambda \
-        epoch: f'./saved_checkpoints/{MODEL_NUM}-PREDICT-{epoch}.pth'
-
-### set up logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler('log/{}.log'.format(str(time.time())))
-fh.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.WARN)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-fh.setFormatter(formatter)
-ch.setFormatter(formatter)
-logger.addHandler(fh)
-logger.addHandler(ch)
-logger.info(args)
+        epoch: f'./saved_checkpoints/{MODEL_NAME}-{epoch}.pth'
 
 if EMBEDDING_METHOD != 'GAT':
-    logger.info('Only for GAT Model')
+    logger.info('Only for Pretrained GAT Model')
     logger.info('Exit Program')
     exit()
 
-### Load data and train val test split
-g_df = pd.read_csv('./processed/{}_structure.csv'.format(DATA))
-e_feat = np.load('./processed/{}_edge_feat.npy'.format(DATA))
-n_feat = torch.from_numpy(np.load('./processed/{}_node_feat_GAT.npy'.format(DATA))).to(device)
+# Load data and train val test split
+g_df = pd.read_csv(f'./processed/{SUBREDDIT}_structure.csv', index_col=0)
+n_feat = torch.cuda.FloatTensor(np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy'))
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
 src_l = g_df.u.values
 dst_l = g_df.i.values
+label_l = g_df.label.values
 ts_l = g_df.ts.values
 
-train_time = 3888000
-test_time = np.quantile(np.unique(g_ts[(g_ts > train_time)]), 0.5)
+train_time = 3283200  # '2018-02-08 00:00:00' - '2018-01-01 00:00:00'
+test_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
+
+max_src_index = src_l.max()
+max_idx = max(src_l.max(), dst_l.max())
 
 time_cut_flag = (ts_l < time_cut)
 train_flag = (g_ts < train_time)
-test_flag = (g_ts >= train_time) & (g_ts < test_time)
-val_flag = (g_ts >= test_time)
+val_flag = (g_ts >= train_time) & (g_ts < test_time)
+test_flag = (g_ts >= test_time)
 
 logger.info('Training use all train data')
 train_g_num_l = g_num[train_flag & time_cut_flag]
 train_src_l = src_l[train_flag & time_cut_flag]
 train_dst_l = dst_l[train_flag & time_cut_flag]
+train_label_l = label_l[train_flag & time_cut_flag]
 
 # use the true test dataset
 test_g_num_l = g_num[test_flag & time_cut_flag]
 test_src_l = src_l[test_flag & time_cut_flag]
 test_dst_l = dst_l[test_flag & time_cut_flag]
+test_label_l = label_l[test_flag & time_cut_flag]
 
 val_g_num_l = g_num[val_flag & time_cut_flag]
 val_src_l = src_l[val_flag & time_cut_flag]
 val_dst_l = dst_l[val_flag & time_cut_flag]
+val_label_l = label_l[val_flag & time_cut_flag]
+
+total_src_l = np.hstack((train_src_l, test_src_l, val_src_l))
+total_dst_l = np.hstack((train_dst_l, test_dst_l, val_dst_l))
 
 cntr = Counter(g_num)
 MAX_SEQ = cntr.most_common(1)[0][1]
@@ -301,7 +308,7 @@ if 0 < SEQ_SLICING:
 elif SEQ_SLICING < 0:
     MAX_SEQ = int(-SEQ_SLICING)
 
-#graph labeling
+# Graph labeling
 graph_label_map = {}
 for k in set(g_num):
     temp_ts_l = ts_l[g_num == k]
@@ -315,7 +322,7 @@ for k in set(g_num):
     else:
         graph_label_map[k] = 0
 
-#class balancing in train data
+# Class balancing in train data
 if CLASS_BALANCING == 'BALANCED':
     neg_k = np.array([])
     pos_k = np.array([])
@@ -332,10 +339,34 @@ if CLASS_BALANCING == 'BALANCED':
     else:
         major, minor = neg_k, pos_k
 
-early_stopper = EarlyStopMonitor(max_round)
+graph = dgl.graph((total_src_l, total_dst_l), num_nodes=n_feat.shape[0]).to(device)
+gat = GAT(graph,
+          in_dim=n_feat.shape[1],
+          hidden_dim=n_feat.shape[1],
+          out_dim=n_feat.shape[1],
+          num_heads=2)
+
+device = torch.device(f'cuda:{GPU}')
+gat.to(device)
+
 num_instance = len(train_src_l)
-logger.debug('num of training instances: {}'.format(num_instance))
-logger.debug('num of graphs per epoch: {}'.format(len(set(train_g_num_l))))
+num_batch = math.ceil(num_instance / BATCH_SIZE)
+logger.debug(f'num of training instances: {num_instance}')
+logger.debug(f'num of graphs per epoch: {len(set(train_g_num_l))}')
+
+logger.info('loading saved GAT model')
+
+#select pre-trained model
+pretrained_model = f'GAT-{SUBREDDIT}-{WORD_EMBEDDING}-{BATCH_SIZE}-{LEARNING_RATE}.pth'
+logger.info(spec[:])
+
+model_path = f'./saved_models/pretrained_models/{pretrained_model}'
+gat.load_state_dict(torch.load(model_path))
+gat.eval()
+with torch.no_grad():
+    gat.forward(n_feat)
+feature = gat.feature
+logger.info(f'GAT models loaded : {pretrained_model}')
 logger.info('Start training Graph classification task')
 
 if PRED_METHOD == 'LSTM':
@@ -351,6 +382,8 @@ lr_model = lr_model.to(device)
 lr_optimizer = torch.optim.Adam(lr_model.parameters(), lr=args.lr)
 lr_criterion = torch.nn.BCELoss()
 lr_criterion_eval = torch.nn.BCELoss()
+
+early_stopper = EarlyStopMonitor(max_round)
 
 def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
 
@@ -370,10 +403,10 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
         for i, k in enumerate(g_l):
             if k not in graph_label_map:
                 continue
-            src_l_cut = torch.from_numpy(src_l[g_num_l == k]).to(device)
+            src_l_cut = src_l[g_num_l == k]
             label = graph_label_map[k]
 
-            src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
+            src_embed = feature[src_l_cut]
             src_label = torch.cuda.FloatTensor([label])
 
             lr_prob = lr_model(src_embed, k).sigmoid()
@@ -395,7 +428,8 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
 
     # save performance
     if data_type:
-        new = [{'SUBREDDIT': DATA,
+        new = [{'SUBREDDIT' : SUBREDDIT,
+                'WORD_EMBEDDING' : WORD_EMBEDDING,
                 'EMBEDDING_METHOD': EMBEDDING_METHOD,
                 'TGAT_TIME_CUT': tgat_time_cut,
                 'PRED_TIME_CUT': time_cut,
@@ -436,11 +470,11 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
                            'pred_prob': pred_prob,
                            'pred_label': pred_label})
 
-        df.to_csv('./saved_data/{}.csv'.format(MODEL_NUM))
+        df.to_csv(f'./saved_data/{MODEL_NUM}.csv')
 
     return acc, auc_roc, AP, recall, F1, loss / num_instance
 
-for epoch in tqdm(range(args.n_epoch)):
+for epoch in tqdm(range(NUM_EPOCH)):
     lr_model = lr_model.train()
 
     # random choice
@@ -453,11 +487,11 @@ for epoch in tqdm(range(args.n_epoch)):
     np.random.shuffle(g_l)
 
     for k in g_l:
-        src_l_cut = torch.from_numpy(train_src_l[train_g_num_l == k]).to(device)
+        src_l_cut = train_src_l[train_g_num_l == k]
         label = graph_label_map[k]
 
         lr_optimizer.zero_grad()
-        src_embed = torch.index_select(n_feat, 0, src_l_cut).to(device)
+        src_embed = feature[src_l_cut]
         src_label = torch.cuda.FloatTensor([label])
 
         lr_prob = lr_model(src_embed, k).sigmoid()
@@ -466,32 +500,30 @@ for epoch in tqdm(range(args.n_epoch)):
         lr_optimizer.step()
 
     val_acc, val_auc, val_AP, val_recall, val_F1, val_loss = eval_epoch(val_src_l, val_g_num_l, lr_model, 0)
-    logger.info('epoch: {}:'.format(epoch))
-    logger.info('val loss: {}'.format(val_loss))
-    logger.info('val acc: {}'.format(val_acc))
-    logger.info('val auc: {}'.format(val_auc))
-    logger.info('val ap: {}'.format(val_AP))
-    logger.info('val f1: {}'.format(val_F1))
+    logger.info(f'epoch: {epoch}:')
+    logger.info(f'val loss: {val_loss}')
+    logger.info(f'val acc: {val_acc}')
+    logger.info(f'val auc: {val_auc}')
+    logger.info(f'val ap: {val_AP}')
+    logger.info(f'val f1: {val_F1}')
 
     if early_stopper.early_stop_check(val_auc):
-        logger.info('No improvment over {} epochs, stop training'.format(early_stopper.max_round))
+        logger.info(f'No improvement over {early_stopper.max_round} epochs, stop training')
         best_epoch = early_stopper.best_epoch
         logger.info(f'Loading the best model at epoch {best_epoch}')
         best_model_path = get_checkpoint_path(best_epoch)
         lr_model.load_state_dict(torch.load(best_model_path))
         logger.info(f'Loaded the best model at epoch {best_epoch} for inference')
-        lr_model.eval()
         os.remove(best_model_path)
-        logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, best_epoch))
         break
     else:
         if early_stopper.is_best:
             torch.save(lr_model.state_dict(), get_checkpoint_path(epoch))
-            logger.info('Saved {}-PREDICTED-{}.pth'.format(MODEL_NUM, early_stopper.best_epoch))
+            logger.info(f'Saved {MODEL_NAME}-{early_stopper.best_epoch}.pth')
             for i in range(epoch):
                 try:
                     os.remove(get_checkpoint_path(i))
-                    logger.info('Deleted {}-PREDICT-{}.pth'.format(MODEL_NUM, i))
+                    logger.info(f'Deleted {MODEL_NAME}-{i}.pth')
                 except:
                     continue
 
