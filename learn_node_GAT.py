@@ -40,7 +40,7 @@ class MEAN(torch.nn.Module):
         if self.post_concat:
             k = k.astype(np.int64)
             # post_k = torch.from_numpy(n_feat[k]).to(device)
-            post_k = n_feat[k]
+            post_k = n_feat[k].to(device)
             x = x.mean(dim=0)
             x = torch.cat((x, post_k), axis=0)
             x = self.dropout(x)
@@ -137,7 +137,7 @@ class LSTM(torch.nn.Module):
         if self.post_concat:
             k = k.astype(np.int64)
             # post_k = torch.from_numpy(n_feat[k]).to(device)
-            post_k = n_feat[k]
+            post_k = n_feat[k].to(device)
             h_out = torch.unsqueeze(torch.cat((h_out[0], post_k), axis=0), 0)
 
         if self.NUM_FC == 2:
@@ -260,7 +260,7 @@ if EMBEDDING_METHOD != 'GAT':
 
 # Load data and train val test split
 g_df = pd.read_csv(f'./processed/{SUBREDDIT}_structure.csv', index_col=0)
-n_feat = torch.cuda.FloatTensor(np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy'))
+n_feat = torch.from_numpy(np.load(f'./processed/{SUBREDDIT}_node_feat_{WORD_EMBEDDING}.npy'))
 
 g_num = g_df.g_num.values
 g_ts = g_df.g_ts.values
@@ -339,7 +339,7 @@ if CLASS_BALANCING == 'BALANCED':
     else:
         major, minor = neg_k, pos_k
 
-graph = dgl.graph((total_src_l, total_dst_l), num_nodes=n_feat.shape[0]).to(device)
+graph = dgl.graph((total_src_l, total_dst_l), num_nodes=n_feat.shape[0])
 gat = GAT(graph,
           in_dim=n_feat.shape[1],
           hidden_dim=n_feat.shape[1],
@@ -347,7 +347,7 @@ gat = GAT(graph,
           num_heads=2)
 
 device = torch.device(f'cuda:{GPU}')
-gat.to(device)
+# gat.to(device)
 
 num_instance = len(train_src_l)
 num_batch = math.ceil(num_instance / BATCH_SIZE)
@@ -406,7 +406,7 @@ def eval_epoch(src_l, g_num_l, lr_model, data_type, num_layer=NODE_LAYER):
             src_l_cut = src_l[g_num_l == k]
             label = graph_label_map[k]
 
-            src_embed = feature[src_l_cut]
+            src_embed = feature[src_l_cut].to(device)
             src_label = torch.cuda.FloatTensor([label])
 
             lr_prob = lr_model(src_embed, k).sigmoid()
@@ -491,7 +491,7 @@ for epoch in tqdm(range(NUM_EPOCH)):
         label = graph_label_map[k]
 
         lr_optimizer.zero_grad()
-        src_embed = feature[src_l_cut]
+        src_embed = feature[src_l_cut].to(device)
         src_label = torch.cuda.FloatTensor([label])
 
         lr_prob = lr_model(src_embed, k).sigmoid()
