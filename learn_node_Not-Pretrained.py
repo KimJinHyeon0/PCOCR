@@ -268,8 +268,8 @@ test_time = 3888000  # '2018-02-15 00:00:00' - '2018-01-01 00:00:00'
 
 time_cut_flag = (ts_l < time_cut)
 train_flag = (g_ts < train_time)
-test_flag = (g_ts >= train_time) & (g_ts < test_time)
-val_flag = (g_ts >= test_time)
+val_flag = (g_ts >= train_time) & (g_ts < test_time)
+test_flag = (g_ts >= test_time)
 
 logger.info('Training use all train data')
 train_g_num_l = g_num[train_flag & time_cut_flag]
