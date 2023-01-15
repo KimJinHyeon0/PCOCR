@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-subredditlist = ['iama', 'showerthoughts']
+subredditlist = ['showerthoughts']
 for subreddit in subredditlist:
     print('\nProcessing subreddit - {}...\n'.format(subreddit))
 
@@ -58,13 +58,13 @@ for subreddit in subredditlist:
 
     assert len(total_key_set) == len(set(total_key_set))
     sentence_df = pd.DataFrame.from_dict(total_sentence_dict, columns=['raw_text'], orient='index')
-    df = pd.DataFrame({'g_num' : g_list,
-                       'g_ts' : g_ts_list,
+    df = pd.DataFrame({'g_num': g_list,
+                       'g_ts': g_ts_list,
                        'u': u_list,
                        'i': i_list,
                        'ts': ts_list})
 
-    #Remove nodes disconnected from posts
+    # Remove nodes disconnected from posts
     print('Removing nodes disconnected from posts...')
     temp = 0
     rn = 0
@@ -88,9 +88,10 @@ for subreddit in subredditlist:
             del node_map[i]
 
         df = df.drop(useless_indices)
+    print('done.')
     print(f'Removed {rn} useless nodes')
 
-    #Remove graphs where #nodes is under 2
+    # Remove graphs where #nodes is under 2
     print('Removing graphs where #nodes is under 2...')
     g_num = df.g_num.values
     before_filt = len(g_num)
@@ -98,7 +99,8 @@ for subreddit in subredditlist:
 
     df = df[isin_filter]
     after_filt = len(df)
-    print(f'Removed {before_filt-after_filt} useless graphs')
+    print(f'Removed {before_filt - after_filt} useless graphs')
+    print('done.')
 
     df['g_num'] = df.g_num.apply(lambda x: node_map[x][0])
     df['u'] = df.u.apply(lambda x: node_map[x][0])
@@ -107,6 +109,13 @@ for subreddit in subredditlist:
     df['label'] = df.u.apply(lambda x: 1 if x in dst_l else 0)
     df['idx'] = df['u']
 
+    # Remove tangled graph
+    if subreddit == 'showerthoughts':
+        print('Removing Tangled graphs...')
+        tangled_g_num = [9630, 18352, 51637, 59047, 84858]
+        df = df.drop(df[df['g_num'].isin(tangled_g_num)].index)
+        print('done.')
+
     df.to_csv(OUT_STRUCTURE_PATH)
     print('\nSaved {}_structure.csv'.format(subreddit))
     total_node_set = np.sort(np.unique(np.hstack((df.g_num.values, df.u.values, df.i.values))))
@@ -114,4 +123,4 @@ for subreddit in subredditlist:
     sentence_df.to_csv(OUT_SENTENCE_PATH)
     print('\nSaved {}_sentence.csv'.format(subreddit))
 
-print('\nDone')
+print('\nDone.')
